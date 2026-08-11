@@ -26,7 +26,7 @@
 
 #include <Servo.h>
 
-const uint8_t ARM_SERVO_PIN = 8;
+const uint8_t ARM_SERVO_PIN = 9;
 
 const int SWEEP_MIN_ANGLE = 20;
 const int SWEEP_MAX_ANGLE = 160;
