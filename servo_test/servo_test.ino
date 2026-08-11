@@ -1,177 +1,67 @@
 /*
  * ============================================================================
- * servo_test.ino —— D9 机械臂舵机调用验证程序（Arduino Nano）
+ * servo_test.ino —— D13 单舵机自动摆动验证（Arduino Nano）
  * ============================================================================
  *
- * 用途：单独验证 Servo 库、D9 信号线和机械臂可达角度。
- * 本程序不控制电机、不循迹、不执行比赛路线。
+ * 本次只测试的实物接线：
+ *   右机械臂舵机信号线  -> Nano D13
  *
- * 接线：
- *   舵机信号线（通常黄/橙/白） → Nano D9
- *   舵机VCC（通常红）          → 独立稳定的5~6V电源
- *   舵机GND（通常棕/黑）        → 电源GND，并与Nano GND共地
+ * 程序作用：上传后不需要USB串口，D13 舵机持续在20°~160°之间往返摆动。
+ * 用它确认：D13信号引脚、舵机供电、共地和机械臂是否可以运动。
  *
- * 注意：
- *   1. 不要用 Nano 的 USB 5V 直接带动大扭矩机械臂舵机；容易掉电复位。
- *   2. 先让机械臂周围没有碰撞物、推拉杆没有卡住，再测试。
- *   3. 旧 pathfinder.ino 的初始位置为 180°，本程序沿用该安全起点。
- *   4. 上传后打开“串口监视器”，波特率设为 115200，换行选择“新行”。
+ * 供电必须满足：
+ *   - 舵机红线：独立稳定的 5~6V 电源（大扭矩机械臂不能依赖Nano USB 5V）
+ *   - 舵机棕/黑线：舵机电源 GND
+ *   - Nano GND 和舵机电源 GND：必须共地
+ *   - 拔掉USB后：Nano本身仍需要由VIN、5V或其他外部方式供电。
  *
- * 串口命令：
- *   0~180 + 回车 : 转到指定角度，例如输入 90
- *   h            : 显示帮助
- *   p            : 显示当前目标角度
- *   c            : 依次测试 180° → 90° → 0° → 90° → 180°（慢速）
- *   r            : 回到 180° 初始/收回位置
- *   x            : 停止输出（detach，舵机不再保持扭矩）
- *   e            : 恢复输出，并回到 180°
+ * D13 同时连接板载LED；但这是独立测试程序，D13会专门输出Servo控制脉冲，
+ * 不影响其他程序。
+ *
+ * 安全说明：
+ *   先使机械臂周围无障碍、推拉杆未卡住。首次使用20°~160°避免撞限位；
+ *   确认安全后，才把 SWEEP_MIN_ANGLE / SWEEP_MAX_ANGLE 改成 0 / 180。
  * ============================================================================
  */
 
 #include <Servo.h>
 
-const uint8_t SERVO_PIN = 9;
-const int SAFE_HOME_ANGLE = 180;  // 与旧 pathfinder.ino 一致；实测后可改
-const int MIN_ANGLE = 0;
-const int MAX_ANGLE = 180;
-const unsigned long SETTLE_MS = 800;
+const uint8_t ARM_SERVO_PIN = 13;
+
+const int SWEEP_MIN_ANGLE = 20;
+const int SWEEP_MAX_ANGLE = 160;
+const int SWEEP_STEP_DEGREES = 1;
+const unsigned long SWEEP_STEP_MS = 20;
+const unsigned long ENDPOINT_HOLD_MS = 300;
 
 Servo armServo;
-int currentAngle = SAFE_HOME_ANGLE;
-bool servoAttached = false;
+int sweepAngle = 90;
+int sweepDirection = 1;
 
-void printHelp() {
-  Serial.println();
-  Serial.println(F("----- D9 舵机测试命令 -----"));
-  Serial.println(F("输入 0~180 并回车：转到指定角度，例如 90"));
-  Serial.println(F("h：帮助   p：当前角度   c：180-90-0-90-180慢速测试"));
-  Serial.println(F("r：回到180°   x：停止输出(detach)   e：恢复输出"));
-  Serial.println(F("---------------------------"));
-}
-
-int clampAngle(int angle) {
-  if (angle < MIN_ANGLE) return MIN_ANGLE;
-  if (angle > MAX_ANGLE) return MAX_ANGLE;
-  return angle;
-}
-
-void attachServoIfNeeded() {
-  if (!servoAttached) {
-    armServo.attach(SERVO_PIN);
-    servoAttached = true;
-    Serial.println(F("D9 舵机输出已恢复。"));
-  }
-}
-
-void moveToAngle(int requestedAngle) {
-  int targetAngle = clampAngle(requestedAngle);
-  attachServoIfNeeded();
-
-  Serial.print(F("D9 舵机: "));
-  Serial.print(currentAngle);
-  Serial.print(F("° -> "));
-  Serial.print(targetAngle);
-  Serial.println(F("°"));
-
-  armServo.write(targetAngle);
-  currentAngle = targetAngle;
-  delay(SETTLE_MS);  // 留足机械臂完成到位的时间
-}
-
-void runSlowRangeTest() {
-  Serial.println(F("开始慢速范围测试；如发生卡住、碰撞或异响，立即断开舵机电源。"));
-  moveToAngle(180);
-  delay(500);
-  moveToAngle(90);
-  delay(500);
-  moveToAngle(0);
-  delay(500);
-  moveToAngle(90);
-  delay(500);
-  moveToAngle(180);
-  Serial.println(F("范围测试完成，已回到180°。"));
-}
-
-void detachServo() {
-  if (servoAttached) {
-    armServo.detach();
-    servoAttached = false;
-    Serial.println(F("D9 舵机已停止输出；机械臂现在可以被手动移动。"));
-  } else {
-    Serial.println(F("D9 舵机当前已经是 detach 状态。"));
-  }
-}
-
-void handleCommand(char command) {
-  switch (command) {
-    case 'h':
-    case 'H':
-    case '?':
-      printHelp();
-      break;
-
-    case 'p':
-    case 'P':
-      Serial.print(F("当前目标角度: "));
-      Serial.print(currentAngle);
-      Serial.println(F("°"));
-      break;
-
-    case 'c':
-    case 'C':
-      runSlowRangeTest();
-      break;
-
-    case 'r':
-    case 'R':
-      moveToAngle(SAFE_HOME_ANGLE);
-      break;
-
-    case 'x':
-    case 'X':
-      detachServo();
-      break;
-
-    case 'e':
-    case 'E':
-      attachServoIfNeeded();
-      moveToAngle(SAFE_HOME_ANGLE);
-      break;
-
-    case '\r':
-    case '\n':
-    case ' ':
-      break; // 忽略串口监视器发送的换行和空格
-
-    default:
-      Serial.println(F("未知命令；输入 h 查看帮助。"));
-      break;
-  }
+void writeArmAngle(int angle) {
+  armServo.write(angle);
 }
 
 void setup() {
-  Serial.begin(115200);
-  delay(300);
+  armServo.attach(ARM_SERVO_PIN);
 
-  // 明确写入180°，与旧比赛程序的机械臂初始位置保持一致。
-  attachServoIfNeeded();
-  moveToAngle(SAFE_HOME_ANGLE);
-
-  Serial.println(F("servo_test 已启动：D9 机械臂舵机验证。"));
-  printHelp();
+  // 上电后先停在中间位置，再开始缓慢摆动。
+  writeArmAngle(sweepAngle);
+  delay(600);
 }
 
 void loop() {
-  if (!Serial.available()) return;
+  writeArmAngle(sweepAngle);
+  delay(SWEEP_STEP_MS);
 
-  // 数字命令：直接输入角度，例如“135”后回车。
-  char first = Serial.peek();
-  if (first >= '0' && first <= '9') {
-    int requestedAngle = Serial.parseInt();
-    moveToAngle(requestedAngle);
-    return;
+  sweepAngle += sweepDirection * SWEEP_STEP_DEGREES;
+  if (sweepAngle >= SWEEP_MAX_ANGLE) {
+    sweepAngle = SWEEP_MAX_ANGLE;
+    sweepDirection = -1;
+    delay(ENDPOINT_HOLD_MS);
+  } else if (sweepAngle <= SWEEP_MIN_ANGLE) {
+    sweepAngle = SWEEP_MIN_ANGLE;
+    sweepDirection = 1;
+    delay(ENDPOINT_HOLD_MS);
   }
-
-  // 字母命令：每次取一个字符处理。
-  handleCommand(Serial.read());
 }
