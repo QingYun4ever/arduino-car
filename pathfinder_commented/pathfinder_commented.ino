@@ -579,15 +579,15 @@ void loop() {
   buzzerAlarm_D8(2, 150);           // 鸣笛2声
   goStraight(300);                  // 驶离启动区
   /* ===== 段3: 第一段巡线 ===== */
-  lineFollowTime(900);              // 循迹700ms
-  spinRight(700);                   // 原地右转(转弯)
+  lineFollowTime(770);              // 循迹700ms
+  spinRight(650);                   // 原地右转(转弯)
   delay(3500);                      // 等待3.5s(推测: 等车身摆正/现场节奏)
   turnUntilLine(1);                 // 左向对线
   lineFollowJunction(1);            // 循迹找左侧路口
   goStraight(500);
   turnUntilLine(2);                 // 右向对线
   lineFollowJunction(2);            // 循迹找右侧路口
-  goStraight(300);
+  goStraight(200);
   turnUntilLine(2);
   lineFollowTime(700);              // 循迹700ms
   delay(1500);                      // 等待1.5s
@@ -614,7 +614,7 @@ void loop() {
   lineFollowJunction(2);
   goStraight(300);
   /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
-  spinLeft(1000);                    // 原地左转
+  spinLeft(800);                    // 原地左转
   delay(3500);                      // 等待3.5s
   turnUntilLine(2);
   turnUntilLine(2);
