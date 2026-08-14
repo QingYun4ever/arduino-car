@@ -520,97 +520,27 @@ void lineFollowTime(int timeMs) {
   digitalWrite(7, HIGH);
   analogWrite(6, 0);
 }
-/* ============================================================
- * 定时巡线后退 timeMs 毫秒
- *
- * A1 / A2 继续负责循迹纠偏
- * 电机方向改为后退方向
- * 时间到后停车
- *
- * 用法：
- * lineFollowBackwardTime(900);
- * ============================================================ */
-void lineFollowBackwardTime(int timeMs) {
 
-  systemTime = millis();
+void visionAction(int action) {
 
-  while (millis() - systemTime < timeMs) {
-
-    /* A1 / A2 状态相同：直线后退 */
-    if (
-      analogRead(A1) > my_2_threshold &&
-      analogRead(A2) > my_3_threshold
-    ) {
-
-      digitalWrite(2, (!direction));
-      digitalWrite(4, direction);
-      analogWrite(3, speed);
-
-      digitalWrite(5, direction);
-      digitalWrite(7, (!direction));
-      analogWrite(6, speed + correction);
-    }
-
-
-    /* A1 / A2 都进入另一状态：仍直线后退 */
-    if (
-      analogRead(A1) < my_2_threshold &&
-      analogRead(A2) < my_3_threshold
-    ) {
-
-      digitalWrite(2, (!direction));
-      digitalWrite(4, direction);
-      analogWrite(3, speed);
-
-      digitalWrite(5, direction);
-      digitalWrite(7, (!direction));
-      analogWrite(6, speed + correction);
-    }
-
-
-    /* A1 < 阈值，A2 > 阈值 */
-    if (
-      analogRead(A1) < my_2_threshold &&
-      analogRead(A2) > my_3_threshold
-    ) {
-
-      /* 左轮停，右轮后退 */
-      digitalWrite(2, (!direction));
-      digitalWrite(4, direction);
-      analogWrite(3, 0);
-
-      digitalWrite(5, direction);
-      digitalWrite(7, (!direction));
-      analogWrite(6, speed);
-    }
-
-
-    /* A1 > 阈值，A2 < 阈值 */
-    if (
-      analogRead(A1) > my_2_threshold &&
-      analogRead(A2) < my_3_threshold
-    ) {
-
-      /* 左轮后退，右轮停 */
-      digitalWrite(2, (!direction));
-      digitalWrite(4, direction);
-      analogWrite(3, speed);
-
-      digitalWrite(5, direction);
-      digitalWrite(7, (!direction));
-      analogWrite(6, 0);
-    }
+  if (action == 1) {
+    // 鸣笛1声
+    delay(200);
+    buzzerAlarm_D8(1, 150);
+    delay(200);
   }
 
+  else if (action == 2) {
+    // 鸣笛2声
+    delay(200);
+    buzzerAlarm_D8(2, 150);
+    delay(200);
+  }
 
-  /* 时间到，停车 */
-  digitalWrite(2, HIGH);
-  digitalWrite(4, LOW);
-  analogWrite(3, 0);
-
-  digitalWrite(5, LOW);
-  digitalWrite(7, HIGH);
-  analogWrite(6, 0);
+  else if (action == 3) {
+    // 静止2秒
+    delay(2000);
+  }
 }
 /* ============================================================
  * setup: 初始化所有引脚与变量
@@ -673,7 +603,7 @@ void loop() {
   /* ===== 段3: 第一段巡线 ===== */
   lineFollowTime(770);              // 循迹700ms
   spinRight(650);                   // 原地右转(转弯)
-  delay(3500);                      // 等待3.5s(推测: 等车身摆正/现场节奏)
+  visionAction(2);                      // 5区鸣笛
   turnUntilLine(1);                 // 左向对线
   lineFollowJunction(1);            // 循迹找左侧路口
   goStraight(500);
@@ -682,9 +612,8 @@ void loop() {
   goStraight(200);
   turnUntilLine(2);
   lineFollowTime(1000);              // 循迹700ms
-  delay(1500);                      // 等待1.5s
+  visionAction(2);                      // 4区鸣笛
   /* ===== 段4: 信号+转向(推测: 岗位巡查/重点消防响应) ===== */
-  buzzerAlarm_D8(2, 150);           // 鸣笛2声(男技术员?/蓝消防箱?)
   turnUntilLine(1);
   lineFollowJunction(1);
   goStraight(300);
@@ -696,8 +625,7 @@ void loop() {
   goStraight(300);
   turnUntilLine(1);
   lineFollowJunction(2);
-  delay(1500);
-  buzzerAlarm_D8(2, 150);           // 鸣笛2声
+  visionAction(2);          // 消防区鸣笛
   spinRight(200);                   // 原地右转
   turnUntilLine(2);
   lineFollowJunction(1);
@@ -707,14 +635,14 @@ void loop() {
   goStraight(300);
   /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
   spinLeft(800);                    // 原地左转
-  delay(3500);                      // 等待3.5s
+  visionAction(2);                     // 6区鸣笛
   turnUntilLine(2);
   turnUntilLine(2);
   lineFollowJunction(2);
   goStraight(300);
   turnUntilLine(1);
   lineFollowJunction(2);
-  delay(2000);                      // 等待2s
+  visionAction(2);                     // 等待2s
   /* ===== 段6: 急促长鸣+后退(推测: 任务完成/返回) ===== */
   buzzerAlarm_D8(100, 10);          // 连续急促鸣笛100次(结束/提示信号?)
   goBackward(400);                  // 后退400ms
@@ -743,7 +671,7 @@ void loop() {
   spinRight(400);                   // 原地右转
   goStraight(900);                  // 长直行900ms(冲刺?)
   delay(2000);                      // 等待2s
-  buzzerAlarm_D8(2, 150);           // 最后鸣笛2声(推测: 结束信号)
+  visionAction(2);          // 充电区鸣笛
   /* ============================================================
    *                  拓展任务：6台光刻机
    *
@@ -781,7 +709,7 @@ void loop() {
   goStraight(1000);
   delay(200);
   spinRight(700); 
-  delay(3000);                 // 观察3秒
+  visionAction(2);                 // 观察3秒
   spinRight(700);  
                // 回到原道路朝向
   delay(200);
@@ -823,13 +751,13 @@ void loop() {
 
   // ---- 看2号 ----
   spinRight(720);
-  delay(3000);
+  visionAction(2);
   turnUntilLine(2);
   delay(200);
 
   // ---- 从2号直接转向4号 ----
   spinRight(710);
-  delay(3000);
+  visionAction(2);
   turnUntilLine(2);
   delay(200);
 
@@ -880,7 +808,7 @@ void loop() {
 
   spinRight(700);
   goStraight(150); 
-  delay(3000);
+  visionAction(2);
   spinRight(700);              // 不回正，继续右转，直接掉头
     delay(200);
 
@@ -937,7 +865,7 @@ void loop() {
    * ============================================================ */
 
   spinLeft(700);
-  delay(3000);
+  visionAction(2);
   spinRight(1300);
 
 
@@ -954,7 +882,7 @@ void loop() {
    * 16. 看6号，完成拓展任务
    * ============================================================ */
 
-  delay(3000);
+  visionAction(2);
 
   stopProgram();
 }
