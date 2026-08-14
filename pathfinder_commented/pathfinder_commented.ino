@@ -520,7 +520,98 @@ void lineFollowTime(int timeMs) {
   digitalWrite(7, HIGH);
   analogWrite(6, 0);
 }
+/* ============================================================
+ * 定时巡线后退 timeMs 毫秒
+ *
+ * A1 / A2 继续负责循迹纠偏
+ * 电机方向改为后退方向
+ * 时间到后停车
+ *
+ * 用法：
+ * lineFollowBackwardTime(900);
+ * ============================================================ */
+void lineFollowBackwardTime(int timeMs) {
 
+  systemTime = millis();
+
+  while (millis() - systemTime < timeMs) {
+
+    /* A1 / A2 状态相同：直线后退 */
+    if (
+      analogRead(A1) > my_2_threshold &&
+      analogRead(A2) > my_3_threshold
+    ) {
+
+      digitalWrite(2, (!direction));
+      digitalWrite(4, direction);
+      analogWrite(3, speed);
+
+      digitalWrite(5, direction);
+      digitalWrite(7, (!direction));
+      analogWrite(6, speed + correction);
+    }
+
+
+    /* A1 / A2 都进入另一状态：仍直线后退 */
+    if (
+      analogRead(A1) < my_2_threshold &&
+      analogRead(A2) < my_3_threshold
+    ) {
+
+      digitalWrite(2, (!direction));
+      digitalWrite(4, direction);
+      analogWrite(3, speed);
+
+      digitalWrite(5, direction);
+      digitalWrite(7, (!direction));
+      analogWrite(6, speed + correction);
+    }
+
+
+    /* A1 < 阈值，A2 > 阈值 */
+    if (
+      analogRead(A1) < my_2_threshold &&
+      analogRead(A2) > my_3_threshold
+    ) {
+
+      /* 左轮停，右轮后退 */
+      digitalWrite(2, (!direction));
+      digitalWrite(4, direction);
+      analogWrite(3, 0);
+
+      digitalWrite(5, direction);
+      digitalWrite(7, (!direction));
+      analogWrite(6, speed);
+    }
+
+
+    /* A1 > 阈值，A2 < 阈值 */
+    if (
+      analogRead(A1) > my_2_threshold &&
+      analogRead(A2) < my_3_threshold
+    ) {
+
+      /* 左轮后退，右轮停 */
+      digitalWrite(2, (!direction));
+      digitalWrite(4, direction);
+      analogWrite(3, speed);
+
+      digitalWrite(5, direction);
+      digitalWrite(7, (!direction));
+      analogWrite(6, 0);
+    }
+  }
+
+
+  /* 时间到，停车 */
+  digitalWrite(2, HIGH);
+  digitalWrite(4, LOW);
+  analogWrite(3, 0);
+
+  digitalWrite(5, LOW);
+  digitalWrite(7, HIGH);
+  analogWrite(6, 0);
+}
 /* ============================================================
  * setup: 初始化所有引脚与变量
  *   - 蜂鸣器D8、RGB D11/D12/D13 输出并置为"灭"(高电平)
@@ -573,83 +664,296 @@ void setup() {
  *       具体哪段对应哪个任务以现场实测为准。
  * ============================================================ */
 void loop() {
+  
   /* ===== 段1: 阈值校准(上电操作, 见 getThresholds) ===== */
   getThresholds(0, 150, 7);         // 正反=0 速度=150 右轮校正=7
   /* ===== 段2: 开始工作(规则任务1: 鸣笛2声后驶离启动区) ===== */
   buzzerAlarm_D8(2, 150);           // 鸣笛2声
-  goStraight(300);                  // 驶离启动区
-  /* ===== 段3: 第一段巡线 ===== */
-  lineFollowTime(900);              // 循迹700ms
-  spinRight(700);                   // 原地右转(转弯)
-  delay(3500);                      // 等待3.5s(推测: 等车身摆正/现场节奏)
-  turnUntilLine(1);                 // 左向对线
-  lineFollowJunction(1);            // 循迹找左侧路口
-  goStraight(500);
-  turnUntilLine(2);                 // 右向对线
-  lineFollowJunction(2);            // 循迹找右侧路口
-  goStraight(300);
-  turnUntilLine(2);
-  lineFollowTime(700);              // 循迹700ms
-  delay(1500);                      // 等待1.5s
-  /* ===== 段4: 信号+转向(推测: 岗位巡查/重点消防响应) ===== */
-  buzzerAlarm_D8(2, 150);           // 鸣笛2声(男技术员?/蓝消防箱?)
-  turnUntilLine(1);
-  lineFollowJunction(1);
-  goStraight(300);
-  turnUntilLine(1);
-  lineFollowJunction(1);
-  goStraight(300);
-  turnUntilLine(2);
-  lineFollowJunction(2);
-  goStraight(300);
-  turnUntilLine(1);
-  lineFollowJunction(2);
-  delay(1500);
-  buzzerAlarm_D8(2, 150);           // 鸣笛2声
-  spinRight(200);                   // 原地右转
-  turnUntilLine(2);
-  lineFollowJunction(1);
-  goStraight(300);
-  turnUntilLine(1);
-  lineFollowJunction(2);
-  goStraight(300);
-  /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
-  spinLeft(1000);                    // 原地左转
-  delay(3500);                      // 等待3.5s
-  turnUntilLine(2);
-  turnUntilLine(2);
-  lineFollowJunction(2);
-  goStraight(300);
-  turnUntilLine(1);
-  lineFollowJunction(2);
-  delay(2000);                      // 等待2s
-  /* ===== 段6: 急促长鸣+后退(推测: 任务完成/返回) ===== */
-  buzzerAlarm_D8(100, 10);          // 连续急促鸣笛100次(结束/提示信号?)
-  goBackward(400);                  // 后退400ms
-  turnUntilLine(2);
-  lineFollowJunction(2);
-  delay(2000);
-  goBackward(500);                  // 再后退500ms
-  turnUntilLine(2);
-  lineFollowJunction(2);
-  goStraight(300);
-  turnUntilLine(2);
-  lineFollowJunction(1);
-  goStraight(300);
-  turnUntilLine(1);
-  lineFollowJunction(2);
-  goStraight(300);
-  turnUntilLine(2);
-  lineFollowJunction(2);
-  goStraight(300);
-  lineFollowJunction(1);
-  goStraight(300);
-  turnUntilLine(1);
+  // goStraight(300);                  // 驶离启动区
+  // /* ===== 段3: 第一段巡线 ===== */
+  // lineFollowTime(770);              // 循迹700ms
+  // spinRight(650);                   // 原地右转(转弯)
+  // delay(3500);                      // 等待3.5s(推测: 等车身摆正/现场节奏)
+  // turnUntilLine(1);                 // 左向对线
+  // lineFollowJunction(1);            // 循迹找左侧路口
+  // goStraight(500);
+  // turnUntilLine(2);                 // 右向对线
+  // lineFollowJunction(2);            // 循迹找右侧路口
+  // goStraight(200);
+  // turnUntilLine(2);
+  // lineFollowTime(1000);              // 循迹700ms
+  // delay(1500);                      // 等待1.5s
+  // /* ===== 段4: 信号+转向(推测: 岗位巡查/重点消防响应) ===== */
+  // buzzerAlarm_D8(2, 150);           // 鸣笛2声(男技术员?/蓝消防箱?)
+  // turnUntilLine(1);
+  // lineFollowJunction(1);
+  // goStraight(300);
+  // turnUntilLine(1);
+  // lineFollowJunction(1);
+  // goStraight(300);
+  // turnUntilLine(2);
+  // lineFollowJunction(2);
+  // goStraight(300);
+  // turnUntilLine(1);
+  // lineFollowJunction(2);
+  // delay(1500);
+  // buzzerAlarm_D8(2, 150);           // 鸣笛2声
+  // spinRight(200);                   // 原地右转
+  // turnUntilLine(2);
+  // lineFollowJunction(1);
+  // goStraight(300);
+  // turnUntilLine(1);
+  // lineFollowJunction(2);
+  // goStraight(300);
+  // /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
+  // spinLeft(800);                    // 原地左转
+  // delay(3500);                      // 等待3.5s
+  // turnUntilLine(2);
+  // turnUntilLine(2);
+  // lineFollowJunction(2);
+  // goStraight(300);
+  // turnUntilLine(1);
+  // lineFollowJunction(2);
+  // delay(2000);                      // 等待2s
+  // /* ===== 段6: 急促长鸣+后退(推测: 任务完成/返回) ===== */
+  // buzzerAlarm_D8(100, 10);          // 连续急促鸣笛100次(结束/提示信号?)
+  // goBackward(400);                  // 后退400ms
+  // turnUntilLine(2);
+  // lineFollowJunction(2);
+  // delay(2000);
+  // goBackward(500);                  // 再后退500ms
+  // turnUntilLine(2);
+  // lineFollowJunction(2);
+  // goStraight(300);
+  // turnUntilLine(2);
+  // lineFollowJunction(1);
+  // goStraight(300);
+  // turnUntilLine(1);
+  // lineFollowJunction(2);
+  // goStraight(300);
+  // turnUntilLine(2);
+  // lineFollowJunction(2);
+  // goStraight(300);
+  // lineFollowJunction(1);
+  // goStraight(300);
+  // turnUntilLine(1);
+  // 
   lineFollowJunction(1);
   /* ===== 段7: 冲刺+收尾 ===== */
-  spinRight(300);                   // 原地右转
+  spinRight(400);                   // 原地右转
   goStraight(900);                  // 长直行900ms(冲刺?)
   delay(2000);                      // 等待2s
   buzzerAlarm_D8(2, 150);           // 最后鸣笛2声(推测: 结束信号)
+  /* ============================================================
+   *                  拓展任务：6台光刻机
+   *
+   * 已知实测标尺：
+   * 4区L右转后完整直线路段约 lineFollowTime(1000)
+   *
+   * 90°任务观察转向暂按 750ms
+   * 180°暂按 1500ms
+   * 每台观察 3000ms
+   *
+   * 2号和4号在同一个道路中间观察点完成
+   * ============================================================ */
 
+
+  /* ============================================================
+   * 1. 从充电站退回充电T
+   * ============================================================ */
+
+  goBackward(900);             // 与进入充电站的900ms对应
+  delay(200);
+
+  spinRight(500);             // 原地掉头约180°
+  turnUntilLine(2);
+  delay(200);
+
+  /* ============================================================
+   * 2. 从充电T向拓展区走一点，到1号光刻机观察位置
+   *
+   * 这一段地图上比较短，先估400ms
+   * ============================================================ */
+
+
+  // ---- 看1号光刻机 ----
+  spinLeft(750);              // 左转约90°
+  goStraight(1000);
+  delay(200);
+  spinRight(700); 
+  delay(3000);                 // 观察3秒
+  spinRight(700);  
+               // 回到原道路朝向
+  delay(200);
+  lineFollowJunction(1);
+  goStraight(300); 
+  turnUntilLine(1);  
+  
+
+
+
+  /* ============================================================
+   * 3. 按原路线：回正后左转90°
+   * ============================================================ */
+
+  lineFollowJunction(2);
+  goStraight(300); 
+  turnUntilLine(2);            // 光电右转，重新找到横向道路
+
+
+  /* ============================================================
+   * 4. 前进到2号、4号之间的共同观察位置
+   *
+   * 根据地图比例：
+   * 这一段约为4区完整1000ms路段的不到一半
+   * 第一版先用450ms
+   * ============================================================ */
+
+  lineFollowTime(1200);
+  delay(200);
+
+
+  /* ============================================================
+   * 5. 同一位置观察2号和4号
+   *
+   * 当前先右转看2号
+   * 再转180°看道路另一侧的4号
+   * 最后再转90°恢复原行驶方向
+   * ============================================================ */
+
+  // ---- 看2号 ----
+  spinRight(720);
+  delay(3000);
+  turnUntilLine(2);
+  delay(200);
+
+  // ---- 从2号直接转向4号 ----
+  spinRight(710);
+  delay(3000);
+  turnUntilLine(2);
+  delay(200);
+
+  // ---- 从4号恢复到原来的道路朝向 ----
+
+
+  /* ============================================================
+   * 6. 继续巡线到十字路口，然后右转
+   *
+   * 不用时间估算距离，让外侧光电找十字
+   * ============================================================ */
+
+  lineFollowJunction(2);       // 到十字
+  goStraight(300);             // 向十字中心前探
+  turnUntilLine(2);            // 十字右转
+
+
+  /* ============================================================
+   * 7. 到下一个T字，按要求继续直行
+   *
+   * T字不转弯：
+   * 找到横线 → 固定穿过 → 继续巡线
+   * ============================================================ */
+
+  lineFollowJunction(2);       // 到T字
+  goStraight(300);             // 直接通过T字
+
+
+  /* ============================================================
+   * 8. T字后继续一小段，到3号观察位置
+   *
+   * 第一版按地图比例估450ms
+   * ============================================================ */
+
+  lineFollowTime(450);
+
+
+  /* ============================================================
+   * 9. 看3号
+   *
+   * 你已经确认采用B方案：
+   * 右转90看3号
+   * 再继续右转90
+   * 两次右转合计180°，直接形成返程方向
+   * ============================================================ */
+
+  spinRight(750);
+  delay(3000);
+
+  spinRight(750);              // 不回正，继续右转，直接掉头
+
+
+  /* ============================================================
+   * 10. 原路返回刚才那个T字
+   * ============================================================ */
+
+  lineFollowTime(450);
+
+  lineFollowJunction(2);       // 再次到达同一个T
+  goStraight(300);             // 直行穿过T，不转
+
+
+  /* ============================================================
+   * 11. 继续返回十字路口，然后左转
+   * ============================================================ */
+
+  lineFollowJunction(1);       // 到十字
+  goStraight(300);
+  turnUntilLine(1);            // 十字左转
+
+
+  /* ============================================================
+   * 12. 直行到下一个L型，然后右转
+   *
+   * L型前探沿用你当前已经测试过的200ms思路
+   * ============================================================ */
+
+  lineFollowJunction(2);       // 找L型
+  goStraight(200);             // 进入L型拐点
+  turnUntilLine(2);            // L型右转
+
+
+  /* ============================================================
+   * 13. L右转以后继续前进
+   *
+   * 原路线这里会去单独看4号。
+   * 现在4号已经在步骤5完成，所以这里直接通过。
+   *
+   * 根据地图比例先分成两段，方便实车单独调：
+   * 第一段：到原4号附近
+   * 第二段：继续向最后两个光刻机方向
+   * ============================================================ */
+
+  lineFollowTime(600);         // L → 原4号附近，不停车观察
+  lineFollowTime(450);         // 原4号附近 → 5号区域
+
+
+  /* ============================================================
+   * 14. 看5号
+   *
+   * 按之前确定的路线：
+   * 左转看5号 → 回正
+   * ============================================================ */
+
+  spinLeft(750);
+  delay(3000);
+  spinRight(750);
+
+
+  /* ============================================================
+   * 15. 从5号继续到6号
+   *
+   * 地图上两台之间不远，先估450ms
+   * ============================================================ */
+
+  lineFollowTime(450);
+
+
+  /* ============================================================
+   * 16. 看6号，完成拓展任务
+   * ============================================================ */
+
+  spinRight(750);
+  delay(3000);
+
+  stopProgram();
 }
