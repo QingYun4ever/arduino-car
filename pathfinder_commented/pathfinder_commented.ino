@@ -542,6 +542,130 @@ void visionAction(int action) {
     delay(2000);
   }
 }
+
+/* ============================================================
+ * 仓门任务参数
+ * D9机械臂：
+ *   180° = 抬杆
+ *   135° = 下杆
+ *
+ * 以下参数均来自已经实车测试成功的独立程序
+ * ============================================================ */
+
+const int DOOR_SERVO_UP_ANGLE = 180;
+const int DOOR_SERVO_DOWN_ANGLE = 135;
+
+const int DOOR_MOTOR_SPEED = 100;
+
+const int DOOR_INITIAL_BACKWARD_MS = 150;
+const int DOOR_PULL_BACKWARD_MS = 1000;
+const int DOOR_LEAVE_FORWARD_MS = 1000;
+
+const int DOOR_SERVO_SETTLE_MS = 1000;
+
+
+/* ============================================================
+ * 仓门机械臂移动
+ * ============================================================ */
+void moveDoorServo(int angle) {
+  servo_9.write(angle);
+  delay(DOOR_SERVO_SETTLE_MS);
+}
+
+
+/* ============================================================
+ * 仓门任务专用停车
+ * ============================================================ */
+void doorStopMotors() {
+  analogWrite(3, 0);
+  analogWrite(6, 0);
+}
+
+
+/* ============================================================
+ * 仓门任务专用后退
+ *
+ * 使用实测成功的：
+ * 左轮 HIGH / LOW
+ * 右轮 LOW / HIGH
+ * PWM = 100
+ *
+ * 不调用主程序 goBackward()
+ * 防止受到全局 speed / correction 参数影响
+ * ============================================================ */
+void doorDriveBackward(int timeMs) {
+
+  // 左轮后退
+  digitalWrite(2, HIGH);
+  digitalWrite(4, LOW);
+
+  // 右轮后退
+  digitalWrite(5, LOW);
+  digitalWrite(7, HIGH);
+
+  analogWrite(3, DOOR_MOTOR_SPEED);
+  analogWrite(6, DOOR_MOTOR_SPEED);
+
+  delay(timeMs);
+
+  doorStopMotors();
+}
+
+
+/* ============================================================
+ * 仓门任务专用前进
+ *
+ * 使用独立测试中已经成功的电机方向
+ * ============================================================ */
+void doorDriveForward(int timeMs) {
+
+  // 左轮前进
+  digitalWrite(2, LOW);
+  digitalWrite(4, HIGH);
+
+  // 右轮前进
+  digitalWrite(5, HIGH);
+  digitalWrite(7, LOW);
+
+  analogWrite(3, DOOR_MOTOR_SPEED);
+  analogWrite(6, DOOR_MOTOR_SPEED);
+
+  delay(timeMs);
+
+  doorStopMotors();
+}
+
+
+/* ============================================================
+ * 完整仓门任务
+ *
+ * 调用一次：
+ *
+ * 1. 后退150ms调整位置
+ * 2. D9从180°下到135°
+ * 3. 后退1000ms拉开仓门
+ * 4. D9抬回180°
+ * 5. 前进1000ms离开仓门
+ *
+ * ============================================================ */
+void runDoorPullTask() {
+
+  // ① 小幅后退，使拉杆进入合适位置
+  doorDriveBackward(DOOR_INITIAL_BACKWARD_MS);
+  delay(300);
+
+  // ② 下杆
+  moveDoorServo(DOOR_SERVO_DOWN_ANGLE);
+
+  // ③ 后退，把仓门拉出
+  doorDriveBackward(DOOR_PULL_BACKWARD_MS);
+  delay(300);
+
+  // ④ 抬杆，脱离仓门
+  moveDoorServo(DOOR_SERVO_UP_ANGLE);
+
+  doorStopMotors();
+}
 /* ============================================================
  * setup: 初始化所有引脚与变量
  *   - 蜂鸣器D8、RGB D11/D12/D13 输出并置为"灭"(高电平)
@@ -634,7 +758,7 @@ void loop() {
   lineFollowJunction(2);
   goStraight(300);
   /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
-  spinLeft(800);                    // 原地左转
+  spinLeft(750);                    // 原地左转
   visionAction(2);                     // 6区鸣笛
   turnUntilLine(2);
   turnUntilLine(2);
@@ -644,13 +768,19 @@ void loop() {
   lineFollowJunction(2);
   visionAction(2);                     // 等待2s
   /* ===== 段6: 急促长鸣+后退(推测: 任务完成/返回) ===== */
-  buzzerAlarm_D8(100, 10);          // 连续急促鸣笛100次(结束/提示信号?)
+  buzzerAlarm_D8(100, 10);          // 任务四连续急促鸣笛100次(结束/提示信号?)
   goBackward(400);                  // 后退400ms
-  turnUntilLine(2);
-  lineFollowJunction(2);
-  delay(2000);
-  goBackward(500);                  // 再后退500ms
-  turnUntilLine(2);
+  turnUntilLine(2);   //转向仓门区
+  lineFollowJunction(2);//走到仓门t字路口
+
+
+
+  runDoorPullTask(); 
+
+
+
+ // goBackward(500);                  // 再后退500ms
+  turnUntilLine(2); //右转出T字路口（正对6区）
   lineFollowJunction(2);
   goStraight(300);
   turnUntilLine(2);
@@ -668,7 +798,7 @@ void loop() {
   
   lineFollowJunction(1);
   /* ===== 段7: 冲刺+收尾 ===== */
-  spinRight(400);                   // 原地右转
+  spinRight(500);                   // 原地右转
   goStraight(900);                  // 长直行900ms(冲刺?)
   delay(2000);                      // 等待2s
   visionAction(2);          // 充电区鸣笛
@@ -705,11 +835,13 @@ void loop() {
 
 
   // ---- 看1号光刻机 ----
-  spinLeft(750);              // 左转约90°
+  spinLeft(720);              // 左转约90°
   goStraight(1000);
   delay(200);
   spinRight(700); 
-  visionAction(2);                 // 观察3秒
+  visionAction(2);
+  goStraight(200);  
+  delay(200);    
   spinRight(700);  
                // 回到原道路朝向
   delay(200);
@@ -839,7 +971,7 @@ void loop() {
 
   lineFollowJunction(1);       // 找L型
   goStraight(400);             // 进入L型拐点
-  spinRight(800);           // L型右转
+  spinRight(700);           // L型右转
 
 
   /* ============================================================
