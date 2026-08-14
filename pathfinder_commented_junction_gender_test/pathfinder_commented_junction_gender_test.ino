@@ -1,16 +1,62 @@
-/* ============================================================
- * 舱门机械臂 → 右转脱离拉杆 → 对到干路组合测试
+/*
+ * ============================================================
+ * pathfinder_commented_full_vision.ino —— 朋友完整路线+三任务视觉副本
+ * ============================================================
  *
- * 连续流程：
- *   1. 速度100后退150ms，D9由180°降到135°；
- *   2. 继续后退1000ms拉出舱门，停车并将D9抬回180°；
- *   3. D9抬起后原地右转350ms离开舱门方向；
- *   4. 用朋友代码的turnUntilLine(2)对到干路；
- *   5. 到达干路后立即停车，不再前往后续路口，也不做人脸识别。
+ * 【本文件说明】
+ *   - 本文件复制自朋友完成的pathfinder_commented完整基础+拓展路线。
+ *   - 保持原巡线、转向、等待及六台光刻机拓展路线参数不变。
+ *   - 仅增加K230二进制三任务触发、UART结果接收和任务动作。
+ *   - 原pathfinder_commented.ino保持不变。
  *
- * 接线：D9为舱门机械臂；D13留给摄像机舵机，本文件不操作。
- * 本测试不需要运行K230视觉程序。
- * ============================================================ */
+ * 【赛事背景】智能芯片与自动驾驶专项赛·高中组决赛
+ *   - 规则文件: D:\dev\Robot\小车\高中组比赛规则.docx
+ *   - 基础任务100分: 开始工作5 / 岗位巡查30 / 重点消防15 /
+ *     货品管理20 / 检查仓门20 / 返回充电10
+ *   - 拓展任务30分: 设备巡检(6台光刻机+3锥桶)
+ *   - 每轮4分钟, 两轮取最高分; 鸣笛2声或闪灯2次 = 常见"动作完成"信号
+ *
+ * 【硬件接线】(Arduino Nano)
+ *   ┌──────────┬──────────┬──────────────────────────┐
+ *   │ 引脚      │ 外设      │ 说明                      │
+ *   ├──────────┼──────────┼──────────────────────────┤
+ *   │ D8       │ 蜂鸣器    │ 低电平有效(LOW=响)          │
+ *   │ D11      │ 任务bit0 │ 经分压接K230 IO33            │
+ *   │ D12      │ UART RX  │ 接K230 IO9/UART1_TX          │
+ *   │ D13      │ 摄像机舵机│ 禁止作为RGB数字输出           │
+ *   │ A4       │ 任务bit1 │ 经分压接K230 IO32            │
+ *   │ D9       │ 舱门机械臂│ 本次只保留原初始化，不接任务动作│
+ *   │ D10      │ 按键      │ 校准时按三次确认白/黑采样    │
+ *   │ D2/D4/D3│ 左电机    │ TB6612 AIN1/AIN2 + PWMA    │
+ *   │ D5/D7/D6│ 右电机    │ TB6612 BIN1/BIN2 + PWMB    │
+ *   │ A0~A3   │ 光电传感器 │ A0左外 A1中左 A2中右 A3右外 │
+ *   └──────────┴──────────┴──────────────────────────┘
+ *   TB6612 要点: VM接电池、VCC=5V、STBY必须拉高;
+ *   转动 = 方向脚一高一低 + 对应PWM脚给速度, 单拉一脚无效。
+ *
+ * 【传感器判线逻辑】
+ *   每个传感器先标定: 白场采样值(white) + 黑线采样值(black),
+ *   阈值 = (白+黑)/2。运行中 analogRead > 阈值 = 压到黑线。
+ *   A1/A2 是循迹主力(中两路), A0/A3 是左右边界路口检测。
+ *
+ * 【电机逻辑速查】以左电机(D2/D4/D3)为例:
+ *   digitalWrite(2, dir);   → AIN1
+ *   digitalWrite(4, !dir);  → AIN2
+ *   analogWrite(3, 速度);   → PWMA (0~255)
+ *   两方向脚取反即反转; speed 是基础速度, correction 是右轮
+ *   直线补偿(直行时右轮 = speed+correction, 抵消电机差异跑偏)。
+ *
+ * 【调参入口】全部在 loop() 开头的 getThresholds(正反, 速度, 校正):
+ *   - 正反: 0=正向, 1=反向(与电机接线匹配)
+ *   - 速度: 循迹基准速度 (现150)
+ *   - 校正: 右轮补偿 -20~+20 (现7)
+ * ============================================================
+ */
+/*
+ * 朋友主路线“右侧路口转弯 → 性别识别”独立测试。
+ * 只用于验证转弯后的相机位置是否能够看到技术员立牌；
+ * 不执行舱门机械臂动作，也不执行完整主路线。
+ */
 #include <Servo.h>
 #include <SoftwareSerial.h>
 #include <string.h>
@@ -28,16 +74,6 @@ const unsigned long K230_UART_BAUDRATE = 57600;
 const unsigned long K230_TASK_HIGH_MS = 500;
 const unsigned long K230_RESULT_TIMEOUT_MS = 4500;
 const uint8_t K230_MAX_ATTEMPTS = 2;
-
-const uint8_t DOOR_SERVO_UP_ANGLE = 180;
-const uint8_t DOOR_SERVO_DOWN_ANGLE = 135;
-const int DOOR_PULL_SPEED = 100;
-const unsigned long DOOR_INITIAL_BACKWARD_MS = 150;
-const unsigned long DOOR_PULL_BACKWARD_MS = 1000;
-const unsigned long DOOR_SERVO_SETTLE_MS = 1000;
-const unsigned long DOOR_CLEAR_RIGHT_MS = 350;
-const unsigned long DOOR_CLEAR_ALIGN_SETTLE_MS = 200;
-const unsigned long DOOR_TO_ROUTE_SETTLE_MS = 500;
 
 const uint8_t VISION_TASK_IDLE = 0;
 const uint8_t VISION_TASK_GENDER = 1;
@@ -793,10 +829,10 @@ void lineFollowBackwardTime(int timeMs) {
   analogWrite(6, 0);
 }
 /* ============================================================
- * setup: 初始化原路线硬件、D9舱门机械臂和K230通信
+ * setup: 初始化原路线硬件和K230三任务通信
  *   - D11/A4为任务bit0/bit1，D12为K230 UART接收
  *   - D13留给摄像机舵机，本副本不对D13执行digitalWrite
- *   - D9先保持180°抬杆，正式测试中执行完整拉门动作
+ *   - 舵门机械臂D9只保持朋友原程序的180°初始化
  * ============================================================ */
 void setup() {
   Serial.begin(115200);
@@ -1138,55 +1174,36 @@ void fullRouteReferenceDisabled() {
 }
 #endif
 
-void runDoorPullAndPrepareRoute() {
-  int savedSpeed = speed;
-  int savedCorrection = correction;
-
-  // 舱门动作严格沿用已验证的单模块参数，不使用主路线150速度。
-  speed = DOOR_PULL_SPEED;
-  correction = 0;
-
-  Serial.println(F("DOOR 1: reverse 150ms for rod clearance"));
-  goBackward(DOOR_INITIAL_BACKWARD_MS);
+void waitForJunctionTestStart() {
+  Serial.println(F("Place car before the RIGHT junction, then press D10."));
+  while (digitalRead(10) == HIGH) {
+    delay(10);
+  }
+  delay(30);
+  while (digitalRead(10) == LOW) {
+    delay(10);
+  }
   delay(300);
-
-  Serial.println(F("DOOR 2: lower D9 arm to 135 degrees"));
-  servo_9.write(DOOR_SERVO_DOWN_ANGLE);
-  delay(DOOR_SERVO_SETTLE_MS);
-
-  Serial.println(F("DOOR 3: reverse 1000ms to pull door outward"));
-  goBackward(DOOR_PULL_BACKWARD_MS);
-
-  // goBackward结束时已经停车；先完全抬杆，禁止直接向前把拉杆推回去。
-  Serial.println(F("DOOR 4: stopped; raise D9 arm to 180 degrees"));
-  servo_9.write(DOOR_SERVO_UP_ANGLE);
-  delay(DOOR_SERVO_SETTLE_MS);
-  stopDriveForVision();
-
-  // 先在原地右转离开舱门正前方，再沿用朋友代码的右向传感器对线。
-  // 这一段完成之前绝不调用goStraight或lineFollowJunction。
-  Serial.println(F("CLEAR 1: spin right 350ms away from the pulled door"));
-  spinRight(DOOR_CLEAR_RIGHT_MS);
-
-  Serial.println(F("CLEAR 2: align to departure line with turnUntilLine(2)"));
-  turnUntilLine(2);
-  delay(DOOR_CLEAR_ALIGN_SETTLE_MS);
-
-  // 脱离舱门并完成对线后，才恢复朋友主路线速度和右轮补偿。
-  speed = savedSpeed;
-  correction = savedCorrection;
-  delay(DOOR_TO_ROUTE_SETTLE_MS);
-
-  Serial.println(F("HANDOFF PASS: clear of door and aligned to main road"));
 }
 
 void loop() {
-  // 白/黑校准后，第三次D10作为整套组合测试启动键。
+  // 沿用朋友主程序的校准、速度和右轮补偿。
   getThresholds(0, 150, 7);
+  waitForJunctionTestStart();
 
-  // 拉门后先右转避开拉杆，只对到干路，不再继续前进。
-  runDoorPullAndPrepareRoute();
+  Serial.println(F("STEP 1: follow line to RIGHT junction"));
+  lineFollowJunction(2);
 
-  Serial.println(F("DONE: door pulled and car aligned to main road; stop here."));
+  Serial.println(F("STEP 2: move 300ms into junction"));
+  goStraight(300);
+
+  Serial.println(F("STEP 3: align RIGHT using main-route turnUntilLine(2)"));
+  turnUntilLine(2);
+  delay(300);
+
+  Serial.println(F("STEP 4: request GENDER recognition after turn"));
+  inspectGenderAtZone(0);
+
+  Serial.println(F("DONE: junction turn + gender recognition test finished."));
   stopProgram();
 }
