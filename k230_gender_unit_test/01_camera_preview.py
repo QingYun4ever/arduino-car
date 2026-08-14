@@ -13,7 +13,7 @@ from media.media import MediaManager
 from media.sensor import Sensor
 
 
-IMAGE_WIDTH = 640
+IMAGE_WIDTH = 800
 IMAGE_HEIGHT = 480
 
 sensor = None
@@ -24,12 +24,12 @@ try:
     sensor.set_framesize(width=IMAGE_WIDTH, height=IMAGE_HEIGHT)
     sensor.set_pixformat(Sensor.RGB565)
 
-    # VIRT 将画面发送到 CanMV IDE，不依赖具体型号的板载显示屏。
+    # 使用板载 ST7701 LCD，并通过 to_ide 同时把画面发送到 CanMV IDE。
     Display.init(
-        Display.VIRT,
+        Display.ST7701,
         width=IMAGE_WIDTH,
         height=IMAGE_HEIGHT,
-        fps=30,
+        to_ide=True,
     )
 
     MediaManager.init()
