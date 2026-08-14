@@ -55,8 +55,10 @@ SHAPE_MODEL_INPUT_SIZE = [224, 224]
 # 640x480中心200x200与原1280x960中心400x400视野比例一致。
 SHAPE_RGB888P_SIZE = RGB888P_SIZE
 
-# 人脸检测覆盖完整640x480画面，再缩放到模型固定的320x320输入。
-# 远处人脸像素较少，将检测阈值由0.50降到0.35；多帧投票抑制误检。
+# 技术员标牌固定出现在车头摄像机的中上区域。只把640x480中的
+# x=80..559、y=0..359送入320x320检测模型：排除两侧和车前地面，
+# 同时把ROI内人脸相对放大约1.33倍。检测框会再映射回完整画面坐标。
+FACE_DETECTION_ROI = [80, 0, 480, 360]
 FACE_CONFIDENCE_THRESHOLD = 0.35
 FACE_NMS_THRESHOLD = 0.2
 FACE_MARGIN = 0.4
@@ -213,6 +215,7 @@ class FaceDetectionApp(AIBase):
         confidence_threshold,
         nms_threshold,
         rgb888p_size,
+        detection_roi,
         debug_mode=0,
     ):
         super().__init__(
@@ -230,6 +233,11 @@ class FaceDetectionApp(AIBase):
             ALIGN_UP(rgb888p_size[0], 16),
             rgb888p_size[1],
         ]
+        self.detection_roi = list(detection_roi)
+        self.detection_size = [
+            self.detection_roi[2],
+            self.detection_roi[3],
+        ]
         self.debug_mode = debug_mode
 
         self.ai2d = Ai2d(debug_mode)
@@ -241,9 +249,15 @@ class FaceDetectionApp(AIBase):
         )
 
     def config_preprocess(self):
-        """把摄像头画面按比例缩放并填充到 320x320。"""
+        """裁剪中上ROI，再按比例缩放并填充到320x320。"""
         with ScopedTiming("face detection preprocess config", self.debug_mode > 0):
             top, bottom, left, right = self._get_padding()
+            self.ai2d.crop(
+                self.detection_roi[0],
+                self.detection_roi[1],
+                self.detection_roi[2],
+                self.detection_roi[3],
+            )
             self.ai2d.pad(
                 [0, 0, 0, 0, top, bottom, left, right],
                 0,
@@ -271,23 +285,33 @@ class FaceDetectionApp(AIBase):
                 self.nms_threshold,
                 self.model_input_size[1],
                 self.anchors,
-                self.rgb888p_size,
+                self.detection_size,
                 results,
             )
             if len(decoded) == 0:
                 return []
-            return decoded[0]
+
+            # aidemo返回ROI内坐标；性别裁剪和LCD绘框使用完整640x480坐标。
+            roi_x = self.detection_roi[0]
+            roi_y = self.detection_roi[1]
+            mapped = []
+            for detection in decoded[0]:
+                full_detection = [value for value in detection]
+                full_detection[0] = full_detection[0] + roi_x
+                full_detection[1] = full_detection[1] + roi_y
+                mapped.append(full_detection)
+            return mapped
 
     def _get_padding(self):
         destination_width = self.model_input_size[0]
         destination_height = self.model_input_size[1]
 
         ratio = min(
-            destination_width / self.rgb888p_size[0],
-            destination_height / self.rgb888p_size[1],
+            destination_width / self.detection_size[0],
+            destination_height / self.detection_size[1],
         )
-        resized_width = int(ratio * self.rgb888p_size[0])
-        resized_height = int(ratio * self.rgb888p_size[1])
+        resized_width = int(ratio * self.detection_size[0])
+        resized_height = int(ratio * self.detection_size[1])
 
         width_difference = destination_width - resized_width
         height_difference = destination_height - resized_height
@@ -403,6 +427,7 @@ class FaceGenderUnitTest:
         anchors,
         rgb888p_size,
         display_size,
+        face_detection_roi,
     ):
         self.rgb888p_size = [
             ALIGN_UP(rgb888p_size[0], 16),
@@ -412,6 +437,7 @@ class FaceGenderUnitTest:
             ALIGN_UP(display_size[0], 16),
             display_size[1],
         ]
+        self.face_detection_roi = list(face_detection_roi)
 
         self.face_detector = FaceDetectionApp(
             face_detection_model_path,
@@ -420,6 +446,7 @@ class FaceGenderUnitTest:
             confidence_threshold=FACE_CONFIDENCE_THRESHOLD,
             nms_threshold=FACE_NMS_THRESHOLD,
             rgb888p_size=self.rgb888p_size,
+            detection_roi=self.face_detection_roi,
             debug_mode=0,
         )
         self.face_classifier = FaceGenderApp(
@@ -463,6 +490,31 @@ class FaceGenderUnitTest:
 
     def draw_result(self, pipeline, detections, classifications):
         pipeline.osd_img.clear()
+
+        # 始终画出检测ROI，停车时可直接确认技术员人脸是否进入有效区域。
+        roi_x = self.face_detection_roi[0] \
+            * self.display_size[0] // self.rgb888p_size[0]
+        roi_y = self.face_detection_roi[1] \
+            * self.display_size[1] // self.rgb888p_size[1]
+        roi_width = self.face_detection_roi[2] \
+            * self.display_size[0] // self.rgb888p_size[0]
+        roi_height = self.face_detection_roi[3] \
+            * self.display_size[1] // self.rgb888p_size[1]
+        pipeline.osd_img.draw_rectangle(
+            roi_x,
+            roi_y,
+            roi_width,
+            roi_height,
+            color=(255, 255, 255, 0),
+            thickness=2,
+        )
+        pipeline.osd_img.draw_string_advanced(
+            roi_x + 4,
+            roi_y + 4,
+            22,
+            "FACE ROI",
+            color=(255, 255, 255, 0),
+        )
 
         for index, detection in enumerate(detections):
             x, y, width, height = map(
@@ -1125,6 +1177,7 @@ def main():
             anchors,
             rgb888p_size=RGB888P_SIZE,
             display_size=DISPLAY_SIZE,
+            face_detection_roi=FACE_DETECTION_ROI,
         )
         shape_recognizer = None
 
@@ -1187,6 +1240,7 @@ def main():
                             anchors,
                             rgb888p_size=RGB888P_SIZE,
                             display_size=DISPLAY_SIZE,
+                            face_detection_roi=FACE_DETECTION_ROI,
                         )
 
                     label, confidence, valid_count = measure_gender(

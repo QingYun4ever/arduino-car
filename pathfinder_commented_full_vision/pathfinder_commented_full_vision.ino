@@ -1015,7 +1015,7 @@ void loop() {
   turnUntilLine(1);
   lineFollowJunction(2);
   delay(1500);
-  inspectFireExtinguisher();        // 10：消防颜色，BLUE鸣笛2声
+  inspectGenderAtZone(5);           // 01：第5区岗位巡查
   spinRight(200);                   // 原地右转
   turnUntilLine(2);
   lineFollowJunction(1);
@@ -1026,25 +1026,29 @@ void loop() {
   /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
   spinLeft(800);                    // 原地左转
   delay(3500);                      // 等待3.5s
-  inspectGenderAtZone(5);           // 01：第5区岗位巡查候选点
+  inspectFireExtinguisher();        // 10：从消防点完成识别后继续前往6号
   turnUntilLine(2);
   turnUntilLine(2);
   lineFollowJunction(2);
-  goStraight(300);
+  goStraight(300);                  // 同学主体路线中的6号观察位置
+  inspectGenderAtZone(6);           // 01：检查6号岗位
+
+  // 库房区域暂时完全采用同学主体普通路线，不触发货品识别或舱门机械臂。
   turnUntilLine(1);
   lineFollowJunction(2);
-  delay(2000);                      // 等待2s
-  inspectWaferContainerShape();     // 11：货品/晶圆桶候选点，只记录形状结果
-  /* ===== 段6: 舱门拉出并右转对到干路 ===== */
-  buzzerAlarm_D8(100, 10);          // 保留朋友路线原有急促提示
-  pullDoorAndJoinMainRoad();        // 替代旧后退400ms+直接对线，禁止向前推回拉杆
+  delay(2000);
+  // inspectWaferContainerShape();  // 暂停：晶圆桶与库房任务留待独立单元测试
 
-  // 以下6号人脸及后续路线保持原样；舱门函数只负责回到干路。
+  /* ===== 段6: 同学主体原始库房路线 ===== */
+  buzzerAlarm_D8(100, 10);
+  goBackward(400);
+  turnUntilLine(2);
   lineFollowJunction(2);
   delay(2000);
-  inspectGenderAtZone(6);           // 01：第6区岗位巡查候选点
-  goBackward(500);                  // 再后退500ms
-  turnUntilLine(2);
+
+  // pullDoorAndJoinMainRoad();     // 暂停：拉杆任务留待独立单元测试
+  goBackward(500);                 // 恢复同学主体原代码
+  turnUntilLine(2);                // 恢复同学主体原代码
   lineFollowJunction(2);
   goStraight(300);
   turnUntilLine(2);
