@@ -26,8 +26,8 @@ MODEL_INPUT_SIZE = [320, 320]
 CONFIDENCE_THRESHOLD = 0.5
 NMS_THRESHOLD = 0.2
 
-MODEL_PATH = "/sdcard/app/tests/kmodel/face_detection_320.kmodel"
-ANCHORS_PATH = "/sdcard/app/tests/utils/prior_data_320.bin"
+MODEL_PATH = "/sdcard/kmodel/face_detection_320.kmodel"
+ANCHORS_PATH = "/sdcard/apps/tests/utils/prior_data_320.bin"
 ANCHOR_COUNT = 4200
 ANCHOR_DIMENSION = 4
 
