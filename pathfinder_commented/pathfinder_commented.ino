@@ -669,75 +669,75 @@ void loop() {
   getThresholds(0, 150, 7);         // 正反=0 速度=150 右轮校正=7
   /* ===== 段2: 开始工作(规则任务1: 鸣笛2声后驶离启动区) ===== */
   buzzerAlarm_D8(2, 150);           // 鸣笛2声
-  // goStraight(300);                  // 驶离启动区
-  // /* ===== 段3: 第一段巡线 ===== */
-  // lineFollowTime(770);              // 循迹700ms
-  // spinRight(650);                   // 原地右转(转弯)
-  // delay(3500);                      // 等待3.5s(推测: 等车身摆正/现场节奏)
-  // turnUntilLine(1);                 // 左向对线
-  // lineFollowJunction(1);            // 循迹找左侧路口
-  // goStraight(500);
-  // turnUntilLine(2);                 // 右向对线
-  // lineFollowJunction(2);            // 循迹找右侧路口
-  // goStraight(200);
-  // turnUntilLine(2);
-  // lineFollowTime(1000);              // 循迹700ms
-  // delay(1500);                      // 等待1.5s
-  // /* ===== 段4: 信号+转向(推测: 岗位巡查/重点消防响应) ===== */
-  // buzzerAlarm_D8(2, 150);           // 鸣笛2声(男技术员?/蓝消防箱?)
-  // turnUntilLine(1);
-  // lineFollowJunction(1);
-  // goStraight(300);
-  // turnUntilLine(1);
-  // lineFollowJunction(1);
-  // goStraight(300);
-  // turnUntilLine(2);
-  // lineFollowJunction(2);
-  // goStraight(300);
-  // turnUntilLine(1);
-  // lineFollowJunction(2);
-  // delay(1500);
-  // buzzerAlarm_D8(2, 150);           // 鸣笛2声
-  // spinRight(200);                   // 原地右转
-  // turnUntilLine(2);
-  // lineFollowJunction(1);
-  // goStraight(300);
-  // turnUntilLine(1);
-  // lineFollowJunction(2);
-  // goStraight(300);
-  // /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
-  // spinLeft(800);                    // 原地左转
-  // delay(3500);                      // 等待3.5s
-  // turnUntilLine(2);
-  // turnUntilLine(2);
-  // lineFollowJunction(2);
-  // goStraight(300);
-  // turnUntilLine(1);
-  // lineFollowJunction(2);
-  // delay(2000);                      // 等待2s
-  // /* ===== 段6: 急促长鸣+后退(推测: 任务完成/返回) ===== */
-  // buzzerAlarm_D8(100, 10);          // 连续急促鸣笛100次(结束/提示信号?)
-  // goBackward(400);                  // 后退400ms
-  // turnUntilLine(2);
-  // lineFollowJunction(2);
-  // delay(2000);
-  // goBackward(500);                  // 再后退500ms
-  // turnUntilLine(2);
-  // lineFollowJunction(2);
-  // goStraight(300);
-  // turnUntilLine(2);
-  // lineFollowJunction(1);
-  // goStraight(300);
-  // turnUntilLine(1);
-  // lineFollowJunction(2);
-  // goStraight(300);
-  // turnUntilLine(2);
-  // lineFollowJunction(2);
-  // goStraight(300);
-  // lineFollowJunction(1);
-  // goStraight(300);
-  // turnUntilLine(1);
-  // 
+  goStraight(300);                  // 驶离启动区
+  /* ===== 段3: 第一段巡线 ===== */
+  lineFollowTime(770);              // 循迹700ms
+  spinRight(650);                   // 原地右转(转弯)
+  delay(3500);                      // 等待3.5s(推测: 等车身摆正/现场节奏)
+  turnUntilLine(1);                 // 左向对线
+  lineFollowJunction(1);            // 循迹找左侧路口
+  goStraight(500);
+  turnUntilLine(2);                 // 右向对线
+  lineFollowJunction(2);            // 循迹找右侧路口
+  goStraight(200);
+  turnUntilLine(2);
+  lineFollowTime(1000);              // 循迹700ms
+  delay(1500);                      // 等待1.5s
+  /* ===== 段4: 信号+转向(推测: 岗位巡查/重点消防响应) ===== */
+  buzzerAlarm_D8(2, 150);           // 鸣笛2声(男技术员?/蓝消防箱?)
+  turnUntilLine(1);
+  lineFollowJunction(1);
+  goStraight(300);
+  turnUntilLine(1);
+  lineFollowJunction(1);
+  goStraight(300);
+  turnUntilLine(2);
+  lineFollowJunction(2);
+  goStraight(300);
+  turnUntilLine(1);
+  lineFollowJunction(2);
+  delay(1500);
+  buzzerAlarm_D8(2, 150);           // 鸣笛2声
+  spinRight(200);                   // 原地右转
+  turnUntilLine(2);
+  lineFollowJunction(1);
+  goStraight(300);
+  turnUntilLine(1);
+  lineFollowJunction(2);
+  goStraight(300);
+  /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
+  spinLeft(800);                    // 原地左转
+  delay(3500);                      // 等待3.5s
+  turnUntilLine(2);
+  turnUntilLine(2);
+  lineFollowJunction(2);
+  goStraight(300);
+  turnUntilLine(1);
+  lineFollowJunction(2);
+  delay(2000);                      // 等待2s
+  /* ===== 段6: 急促长鸣+后退(推测: 任务完成/返回) ===== */
+  buzzerAlarm_D8(100, 10);          // 连续急促鸣笛100次(结束/提示信号?)
+  goBackward(400);                  // 后退400ms
+  turnUntilLine(2);
+  lineFollowJunction(2);
+  delay(2000);
+  goBackward(500);                  // 再后退500ms
+  turnUntilLine(2);
+  lineFollowJunction(2);
+  goStraight(300);
+  turnUntilLine(2);
+  lineFollowJunction(1);
+  goStraight(300);
+  turnUntilLine(1);
+  lineFollowJunction(2);
+  goStraight(300);
+  turnUntilLine(2);
+  lineFollowJunction(2);
+  goStraight(300);
+  lineFollowJunction(1);
+  goStraight(300);
+  turnUntilLine(1);
+  
   lineFollowJunction(1);
   /* ===== 段7: 冲刺+收尾 ===== */
   spinRight(400);                   // 原地右转
@@ -854,8 +854,10 @@ void loop() {
    * 找到横线 → 固定穿过 → 继续巡线
    * ============================================================ */
 
-  lineFollowJunction(2);       // 到T字
-  goStraight(300);             // 直接通过T字
+  lineFollowTime(1000); 
+  lineFollowJunction(1);       // 到T字
+  goStraight(1000);             // 直接通过T字
+  delay(200);
 
 
   /* ============================================================
@@ -864,7 +866,7 @@ void loop() {
    * 第一版按地图比例估450ms
    * ============================================================ */
 
-  lineFollowTime(450);
+
 
 
   /* ============================================================
@@ -876,20 +878,20 @@ void loop() {
    * 两次右转合计180°，直接形成返程方向
    * ============================================================ */
 
-  spinRight(750);
+  spinRight(700);
+  goStraight(150); 
   delay(3000);
-
-  spinRight(750);              // 不回正，继续右转，直接掉头
+  spinRight(700);              // 不回正，继续右转，直接掉头
+    delay(200);
 
 
   /* ============================================================
    * 10. 原路返回刚才那个T字
    * ============================================================ */
 
-  lineFollowTime(450);
-
-  lineFollowJunction(2);       // 再次到达同一个T
-  goStraight(300);             // 直行穿过T，不转
+  lineFollowJunction(1);
+  goStraight(300);
+  lineFollowTime(1000);              // 直行穿过T，不转
 
 
   /* ============================================================
@@ -907,9 +909,9 @@ void loop() {
    * L型前探沿用你当前已经测试过的200ms思路
    * ============================================================ */
 
-  lineFollowJunction(2);       // 找L型
-  goStraight(200);             // 进入L型拐点
-  turnUntilLine(2);            // L型右转
+  lineFollowJunction(1);       // 找L型
+  goStraight(400);             // 进入L型拐点
+  spinRight(800);           // L型右转
 
 
   /* ============================================================
@@ -923,8 +925,8 @@ void loop() {
    * 第二段：继续向最后两个光刻机方向
    * ============================================================ */
 
-  lineFollowTime(600);         // L → 原4号附近，不停车观察
-  lineFollowTime(450);         // 原4号附近 → 5号区域
+  goStraight(2400);
+  delay(200);
 
 
   /* ============================================================
@@ -934,9 +936,9 @@ void loop() {
    * 左转看5号 → 回正
    * ============================================================ */
 
-  spinLeft(750);
+  spinLeft(700);
   delay(3000);
-  spinRight(750);
+  spinRight(1300);
 
 
   /* ============================================================
@@ -945,14 +947,13 @@ void loop() {
    * 地图上两台之间不远，先估450ms
    * ============================================================ */
 
-  lineFollowTime(450);
+  goStraight(450);
 
 
   /* ============================================================
    * 16. 看6号，完成拓展任务
    * ============================================================ */
 
-  spinRight(750);
   delay(3000);
 
   stopProgram();
