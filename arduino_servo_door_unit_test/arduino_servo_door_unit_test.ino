@@ -36,7 +36,7 @@ const uint8_t SERVO_DOWN_ANGLE = 135;
 const uint8_t MOTOR_SPEED = 100;
 const unsigned long INITIAL_BACKWARD_MS = 150;
 const unsigned long PULL_BACKWARD_MS = 1000;
-const unsigned long LEAVE_FORWARD_MS = 1000;
+const unsigned long LEAVE_FORWARD_MS = 500;
 const unsigned long SERVO_SETTLE_MS = 1000;
 
 bool testFinished = false;
