@@ -1,0 +1,328 @@
+"""
+=============================================================================
+k230_visual_line_test.py
+Yahboom K230 视觉巡线观察测试（黑线 / 白色背景）
+=============================================================================
+
+【当前用途】
+这是 K230 单独运行的“看线、画线、报数值”程序：
+  - 只检测画面下方 ROI 中的黑色循迹线；
+  - 用 get_regression() 快速线性回归拟合线条；
+  - 在 CanMV IDE 的实时画面叠加 ROI、拟合线和测量数值；
+  - 可选从 UART1 输出观测帧：$LINE,<offset>,<angle>,<magnitude>#。
+
+【明确不做的事情】
+  - 不控制 Arduino Nano；
+  - 不控制 TB6612、电机、蜂鸣器、舵机；
+  - 不接管当前四路光电循迹；
+
+  - 不使用或训练AI模型；
+  - 不做路线、路口、目标物、颜色或人员识别。
+
+本项目的已验证 Nano 光电循迹继续是唯一的电机控制来源。此文件只能在
+K230实物上完成“画面稳定看线”的测试以后，才有资格进入下一阶段讨论。
+
+=============================================================================
+一、上机前必须完成的实物验证
+=============================================================================
+1. 先单独用K230 + Type-C供电 + CanMV IDE运行本文件，绝不先连Nano。
+2. 将镜头牢牢固定在车头，向前下方倾斜。画面下部应看见车前方黑线，且
+   车体、支架、线传感器线束不能遮挡ROI。
+3. 静止移动小车/赛道，使直线、左右弯、T路口、十字路口都进入画面；确认：
+   - 黄色ROI框覆盖的是“即将驶过”的黑线；
+   - 红色拟合线总沿正确的黑线；
+   - 左右移动时 OFFSET 正负方向一致；
+   - 黑线不在ROI时显示 LOST，而不是随机画线。
+4. 在最终比赛灯光、不同阴影、反光处和黑线磨损处重复上述测试。
+5. 只在上述画面稳定后，才允许打开 UART_TELEMETRY（仍先连电脑观察，
+   不是直接接Nano）。
+
+=============================================================================
+二、必须按实物调整的参数（由上至下调整）
+=============================================================================
+CAMERA_HMIRROR / CAMERA_VFLIP
+    若IDE画面左右或上下与真实世界相反，修改；它们会直接影响转向方向。
+ROI_Y / ROI_HEIGHT
+    黄色框的位置与高度。先调整它，使车前方约10~35cm的一段黑线位于框内。
+    框过高：看得远但控制滞后；框过低：易被车体遮挡、来不及转弯。
+BLACK_GRAY_MAX
+    黑线灰度上限，最重要。降低（例如70）可排除阴影；提高（例如110）能
+    包含浅黑/灰黑线，却更可能把阴影或深色物体误当线。
+MIN_MAGNITUDE
+    最小可信度。提高能减少假线，太高则真实线会常被误判LOST。
+X_STRIDE / Y_STRIDE
+    采样间隔。值越小越精细但更慢；先保持默认，若帧率不足再增加X_STRIDE。
+UART_TELEMETRY / UART_REPEAT_MS
+    前面视觉稳定前保持False。打开后只向UART1发送观测数据，不应连接Nano
+    作为电机控制输入。
+
+=============================================================================
+三、输出字段（仅测量，不代表可直接控制）
+=============================================================================
+$LINE,<offset>,<angle>,<magnitude>#
+    offset     ROI底边上拟合线交点相对ROI中心的像素偏移；左负、右正。
+    angle      线相对“图像向上方向”的角度；左负、右正，接近0表示前方近似直。
+    magnitude  K230拟合可信度；低于MIN_MAGNITUDE即为LOST。
+$LINE,LOST,0,0#
+    当前ROI找不到可信黑线。
+
+请先把这些输出与真实画面对应起来；禁止未经实测把offset/angle直接作为
+Nano电机的控制命令。相机安装镜像、视角、车身振动都可能改变符号或增益。
+=============================================================================
+
+K230 / CanMV API依据：Yahboom“巡线基础：快速线性回归”官方例程，以及
+CanMV image.get_regression() API。这个脚本尚未在本项目K230实物上执行。
+"""
+
+import gc
+import math
+import os
+import time
+
+from media.sensor import Sensor
+from media.display import Display
+from media.media import MediaManager
+
+# ========================== 实物调参区（先看这里） ==========================
+
+# 小分辨率足够做首轮“看线”测试；比640x480更快。
+FRAME_WIDTH = 320
+FRAME_HEIGHT = 240
+
+# 下方兴趣区域：只从即将驶过的地面部分找线，避免远处路口/物件干扰。
+ROI_Y = 132
+ROI_HEIGHT = 92
+
+# 默认关闭：先用 IDE 画面验证，绝不能把未校准视觉数据送进Nano电机控制。
+UART_TELEMETRY = False
+UART_REPEAT_MS = 100
+UART_BAUDRATE = 115200
+K230_UART_TX_PIN = 9
+K230_UART_RX_PIN = 10
+
+# K230装反时调整；每次改动后必须重新确认OFFSET和ANGLE的左右符号。
+CAMERA_HMIRROR = False
+CAMERA_VFLIP = False
+
+# 灰度值越小越黑。黑线白底的初始值；必须在实际场地按画面调整。
+BLACK_GRAY_MAX = 90
+
+# 回归质量下限。过小可能误把阴影拟合为线；过大可能频繁LOST。
+MIN_MAGNITUDE = 8
+
+# 线性回归采样步长：先用快速默认，若实时画面帧率不够再增加X_STRIDE。
+X_STRIDE = 2
+Y_STRIDE = 1
+
+# ============================== 视觉显示颜色 ===============================
+
+WHITE = (255, 255, 255)
+YELLOW = (255, 255, 0)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+CYAN = (0, 255, 255)
+
+# =============================== 基础工具函数 ===============================
+
+def ticks_ms():
+    if hasattr(time, "ticks_ms"):
+        return time.ticks_ms()
+    return int(time.time() * 1000)
+
+
+def ticks_diff(now, then):
+    if hasattr(time, "ticks_diff"):
+        return time.ticks_diff(now, then)
+    return now - then
+
+
+def init_sensor():
+    sensor = Sensor(width=FRAME_WIDTH, height=FRAME_HEIGHT)
+    sensor.reset()
+    sensor.set_framesize(width=FRAME_WIDTH, height=FRAME_HEIGHT)
+    sensor.set_pixformat(Sensor.GRAYSCALE)
+    sensor.set_hmirror(CAMERA_HMIRROR)
+    sensor.set_vflip(CAMERA_VFLIP)
+    return sensor
+
+
+def init_display():
+    # VIRT表示将处理结果显示在CanMV IDE的预览窗口，不依赖模块LCD型号。
+    Display.init(Display.VIRT, width=FRAME_WIDTH, height=FRAME_HEIGHT, fps=60)
+    MediaManager.init()
+
+
+def init_uart_if_enabled():
+    """默认不调用。仅在画面验证完成后，才允许打开UART_TELEMETRY。"""
+    if not UART_TELEMETRY:
+        return None, None
+
+    from machine import UART, FPIOA
+    fpioa = FPIOA()
+    fpioa.set_function(K230_UART_TX_PIN, FPIOA.UART1_TXD, ie=0, oe=1)
+    fpioa.set_function(K230_UART_RX_PIN, FPIOA.UART1_RXD, ie=1, oe=0)
+    return UART(UART.UART1, UART_BAUDRATE), fpioa
+
+
+def line_x_at_y(line, y):
+    """
+    返回回归线在指定图像y坐标处的x坐标。
+    回归线可能非常接近水平，故用None表示不能可靠求交点。
+    """
+    x1 = line.x1()
+    y1 = line.y1()
+    x2 = line.x2()
+    y2 = line.y2()
+    dy = y2 - y1
+    if dy == 0:
+        return None
+    return x1 + (y - y1) * (x2 - x1) / dy
+
+
+def line_angle_from_forward(line):
+    """
+    以图像“向上”作为车头正前方：0度=直行，负=左偏，正=右偏。
+    只用于本程序显示/记录，安装镜像后必须靠实物验证符号。
+    """
+    dx = line.x2() - line.x1()
+    dy = line.y2() - line.y1()
+
+    # 令向量固定指向图像上方（dy < 0），避免同一条线端点顺序造成180度跳变。
+    if dy > 0:
+        dx = -dx
+        dy = -dy
+
+    # atan2(dx, -dy)：直向上时dx=0、-dy>0，结果为0。
+    return math.degrees(math.atan2(dx, -dy))
+
+
+def detect_line(img, roi):
+    """仅在ROI内将黑色像素拟合为一条快速最小二乘直线。"""
+    return img.get_regression(
+        [(0, BLACK_GRAY_MAX)],
+        roi=roi,
+        x_stride=X_STRIDE,
+        y_stride=Y_STRIDE,
+        robust=False,  # 官方“快速”回归；先保证实时性，非模型算法。
+    )
+
+
+def measure_line(line, roi):
+    """把回归线转换为项目更直观的offset/angle/magnitude测量值。"""
+    if line is None or line.magnitude() < MIN_MAGNITUDE:
+        return None
+
+    roi_x, roi_y, roi_w, roi_h = roi
+    sample_y = roi_y + roi_h - 1  # 用接近车头的ROI下边缘估计横向误差。
+    x = line_x_at_y(line, sample_y)
+    if x is None:
+        return None
+
+    offset = x - (roi_x + roi_w / 2)
+    angle = line_angle_from_forward(line)
+    return int(round(offset)), int(round(angle)), int(line.magnitude())
+
+
+def draw_overlay(img, roi, line, measurement, fps):
+    """K230 IDE预览叠加。红线=拟合线；绿字=可信；白字=失线。"""
+    img.draw_rectangle(roi, color=YELLOW, thickness=2)
+
+    if measurement is None:
+        status = "LOST  fps=%.1f" % fps
+        img.draw_string_advanced(2, 2, 18, status, color=WHITE)
+        return
+
+    offset, angle, magnitude = measurement
+    img.draw_line(line.line(), color=RED, thickness=2)
+    img.draw_cross(FRAME_WIDTH // 2, roi[1] + roi[3] - 1, color=CYAN, thickness=1)
+    status = "OFF=%+d ANG=%+d MAG=%d" % (offset, angle, magnitude)
+    img.draw_string_advanced(2, 2, 18, status, color=GREEN)
+    img.draw_string_advanced(2, 23, 16, "FPS=%.1f" % fps, color=GREEN)
+
+
+def make_uart_frame(measurement):
+    if measurement is None:
+        return "$LINE,LOST,0,0#\n"
+    offset, angle, magnitude = measurement
+    return "$LINE,%d,%d,%d#\n" % (offset, angle, magnitude)
+
+
+def main():
+    sensor = None
+    uart = None
+    clock = None
+    last_frame = None
+
+    # 固定ROI的宽度等于画面宽度，避免远处/上方目标进入测量。
+    roi = (0, ROI_Y, FRAME_WIDTH, ROI_HEIGHT)
+
+    try:
+        # 主机侧先检查可配置参数，避免ROI越界导致看似“识别失败”。
+        assert 0 <= ROI_Y < FRAME_HEIGHT
+        assert 1 <= ROI_HEIGHT <= FRAME_HEIGHT - ROI_Y
+        assert 0 <= BLACK_GRAY_MAX <= 255
+
+        sensor = init_sensor()
+        init_display()
+        uart, _fpioa = init_uart_if_enabled()
+        sensor.run()
+        clock = time.clock()
+
+        print("K230 visual line OBSERVATION test started.")
+        print("ROI=(0,%d,%d,%d), BLACK_GRAY_MAX=%d" % (
+            ROI_Y, FRAME_WIDTH, ROI_HEIGHT, BLACK_GRAY_MAX))
+        print("Motor control is intentionally NOT implemented.")
+        if UART_TELEMETRY:
+            print("WARNING: UART telemetry enabled. Verify electrical levels before any external wiring.")
+        else:
+            print("UART telemetry disabled: verify IDE overlay first.")
+
+        while True:
+            os.exitpoint()
+            clock.tick()
+
+            img = sensor.snapshot()
+            line = detect_line(img, roi)
+            measurement = measure_line(line, roi)
+            fps = clock.fps()
+            draw_overlay(img, roi, line, measurement, fps)
+
+            # UART只发观测值；默认关闭，并且没有任何电机接口。
+            if uart is not None:
+                now = ticks_ms()
+                if last_frame is None or ticks_diff(now, last_send_ms) >= UART_REPEAT_MS:
+                    frame = make_uart_frame(measurement)
+                    uart.write(frame)
+                    last_frame = frame
+                    last_send_ms = now
+
+            Display.show_image(img)
+            gc.collect()
+
+    except KeyboardInterrupt:
+        print("User stopped K230 visual line observation test.")
+    except Exception as exc:
+        print("K230 visual line test error:", exc)
+    finally:
+        if sensor is not None:
+            try:
+                sensor.stop()
+            except Exception:
+                pass
+        try:
+            Display.deinit()
+        except Exception:
+            pass
+        try:
+            MediaManager.deinit()
+        except Exception:
+            pass
+        if uart is not None:
+            try:
+                uart.deinit()
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    main()
