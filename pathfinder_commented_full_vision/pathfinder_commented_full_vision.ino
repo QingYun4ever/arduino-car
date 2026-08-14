@@ -1,34 +1,84 @@
-/* ============================================================
- * 舱门机械臂 → 右转脱离拉杆 → 对到干路组合测试
+/*
+ * ============================================================
+ * pathfinder_commented_full_vision.ino —— 朋友完整路线+四任务视觉+舱门副本
+ * ============================================================
  *
- * 连续流程：
- *   1. 速度100后退150ms，D9由180°降到135°；
- *   2. 继续后退1000ms拉出舱门，停车并将D9抬回180°；
- *   3. D9抬起后原地右转350ms离开舱门方向；
- *   4. 用朋友代码的turnUntilLine(2)对到干路；
- *   5. 到达干路后立即停车，不再前往后续路口，也不做人脸识别。
+ * 【本文件说明】
+ *   - 本文件复制自朋友完成的pathfinder_commented完整基础+拓展路线。
+ *   - 保持原巡线、转向、等待及六台光刻机拓展路线参数不变。
+ *   - 增加K230四任务通信，并接入D9拉门、D13低头和六台光刻机识别。
+ *   - 原pathfinder_commented.ino保持不变。
  *
- * 接线：D9为舱门机械臂；D13留给摄像机舵机，本文件不操作。
- * 本测试不需要运行K230视觉程序。
- * ============================================================ */
+ * 【赛事背景】智能芯片与自动驾驶专项赛·高中组决赛
+ *   - 规则文件: D:\dev\Robot\小车\高中组比赛规则.docx
+ *   - 基础任务100分: 开始工作5 / 岗位巡查30 / 重点消防15 /
+ *     货品管理20 / 检查仓门20 / 返回充电10
+ *   - 拓展任务30分: 设备巡检(6台光刻机+3锥桶)
+ *   - 每轮4分钟, 两轮取最高分; 鸣笛2声或闪灯2次 = 常见"动作完成"信号
+ *
+ * 【硬件接线】(Arduino Nano)
+ *   ┌──────────┬──────────┬──────────────────────────┐
+ *   │ 引脚      │ 外设      │ 说明                      │
+ *   ├──────────┼──────────┼──────────────────────────┤
+ *   │ D8       │ 蜂鸣器    │ 低电平有效(LOW=响)          │
+ *   │ D11      │ 任务bit0 │ 经分压接K230 IO33            │
+ *   │ D12      │ UART RX  │ 接K230 IO9/UART1_TX          │
+ *   │ D13      │ 摄像机舵机│ 禁止作为RGB数字输出           │
+ *   │ A4       │ 任务bit1 │ 经分压接K230 IO32            │
+ *   │ D9       │ 舱门机械臂│ 180°抬杆、135°下杆，执行拉门任务 │
+ *   │ D10      │ 按键      │ 校准时按三次确认白/黑采样    │
+ *   │ D2/D4/D3│ 左电机    │ TB6612 AIN1/AIN2 + PWMA    │
+ *   │ D5/D7/D6│ 右电机    │ TB6612 BIN1/BIN2 + PWMB    │
+ *   │ A0~A3   │ 光电传感器 │ A0左外 A1中左 A2中右 A3右外 │
+ *   └──────────┴──────────┴──────────────────────────┘
+ *   TB6612 要点: VM接电池、VCC=5V、STBY必须拉高;
+ *   转动 = 方向脚一高一低 + 对应PWM脚给速度, 单拉一脚无效。
+ *
+ * 【传感器判线逻辑】
+ *   每个传感器先标定: 白场采样值(white) + 黑线采样值(black),
+ *   阈值 = (白+黑)/2。运行中 analogRead > 阈值 = 压到黑线。
+ *   A1/A2 是循迹主力(中两路), A0/A3 是左右边界路口检测。
+ *
+ * 【电机逻辑速查】以左电机(D2/D4/D3)为例:
+ *   digitalWrite(2, dir);   → AIN1
+ *   digitalWrite(4, !dir);  → AIN2
+ *   analogWrite(3, 速度);   → PWMA (0~255)
+ *   两方向脚取反即反转; speed 是基础速度, correction 是右轮
+ *   直线补偿(直行时右轮 = speed+correction, 抵消电机差异跑偏)。
+ *
+ * 【调参入口】全部在 loop() 开头的 getThresholds(正反, 速度, 校正):
+ *   - 正反: 0=正向, 1=反向(与电机接线匹配)
+ *   - 速度: 循迹基准速度 (现150)
+ *   - 校正: 右轮补偿 -20~+20 (现7)
+ * ============================================================
+ */
 #include <Servo.h>
 #include <SoftwareSerial.h>
 #include <string.h>
 #include <stdlib.h>
 
 Servo servo_9;                  // 舵机对象: 机械臂/门锁推拉杆 (D9)
+Servo cameraServo_13;           // 摄像机俯仰舵机 (D13)
 
-/* ---- K230二进制三任务通信：[IO32 IO33] ----
- * 00空闲，01性别，10消防颜色，11晶圆桶形状。 */
+const uint8_t CAMERA_SERVO_PIN = 13;
+const uint8_t CAMERA_UP_ANGLE = 0;
+const uint8_t CAMERA_DOWN_ANGLE = 24;
+
+/* ---- K230四任务通信：[IO32 IO33] ----
+ * 00空闲，01性别，10消防颜色；11按持续时间区分：
+ * 500ms=晶圆桶形状，1200ms=光刻机状态牌。 */
 const uint8_t K230_TASK_BIT0_PIN = 11;     // Nano D11 -> K230 IO33
 const uint8_t K230_TASK_BIT1_PIN = A4;     // Nano A4  -> K230 IO32
 const uint8_t K230_UART_RX_PIN = 12;       // K230 IO9 -> Nano D12
 const uint8_t K230_UNUSED_TX_PIN = A5;     // SoftwareSerial占位，不接线
 const unsigned long K230_UART_BAUDRATE = 57600;
 const unsigned long K230_TASK_HIGH_MS = 500;
-const unsigned long K230_RESULT_TIMEOUT_MS = 4500;
+const unsigned long K230_LITHOGRAPHY_HIGH_MS = 1200;
+// SHAPE后下一次GENDER需要按需重新加载两个人脸模型，预留模型切换时间。
+const unsigned long K230_RESULT_TIMEOUT_MS = 9000;
 const uint8_t K230_MAX_ATTEMPTS = 2;
 
+/* ---- 已通过舱门单模块及上干路测试的参数 ---- */
 const uint8_t DOOR_SERVO_UP_ANGLE = 180;
 const uint8_t DOOR_SERVO_DOWN_ANGLE = 135;
 const int DOOR_PULL_SPEED = 100;
@@ -173,7 +223,7 @@ void buzzerAlarm_D8(int alarmCount, int interval) {
 }
 
 /* ============================================================
- * K230三任务通信
+ * K230四任务通信
  * ============================================================ */
 void stopDriveForVision() {
   digitalWrite(2, (!direction));
@@ -249,7 +299,8 @@ bool parseVisionResult(
 bool requestVisionTask(
     uint8_t taskCode,
     const char *expectedTask,
-    VisionResult *result) {
+    VisionResult *result,
+    unsigned long taskHighMs = K230_TASK_HIGH_MS) {
   result->received = false;
   result->task[0] = '\0';
   result->label[0] = '\0';
@@ -261,7 +312,7 @@ bool requestVisionTask(
   setVisionTaskCode(VISION_TASK_IDLE);
   delay(50);
   setVisionTaskCode(taskCode);
-  delay(K230_TASK_HIGH_MS);
+  delay(taskHighMs);
   setVisionTaskCode(VISION_TASK_IDLE);
 
   Serial.print(F("VISION TASK -> "));
@@ -369,6 +420,49 @@ void inspectWaferContainerShape() {
   Serial.print(F(" score="));
   Serial.println(result.value);
   // Cylinder/tube对应的比赛动作尚未指定，本次只记录结果，不擅自鸣笛。
+}
+
+void inspectLithographyMachine(uint8_t machineNumber) {
+  VisionResult result;
+  bool recognized = false;
+
+  Serial.print(F("LITHO machine "));
+  Serial.println(machineNumber);
+
+  for (uint8_t attempt = 1; attempt <= K230_MAX_ATTEMPTS; ++attempt) {
+    Serial.print(F("LITHO attempt "));
+    Serial.print(attempt);
+    Serial.print(F("/"));
+    Serial.println(K230_MAX_ATTEMPTS);
+
+    // 物理任务码仍为11；1200ms长脉冲与500ms晶圆桶形状区分。
+    if (requestVisionTask(
+            VISION_TASK_SHAPE,
+            "LITHO",
+            &result,
+            K230_LITHOGRAPHY_HIGH_MS) &&
+        strcmp(result.label, "U") != 0) {
+      recognized = true;
+      break;
+    }
+    delay(300);
+  }
+
+  if (!recognized) {
+    Serial.println(F("LITHO unavailable; no buzzer, continue route."));
+    return;
+  }
+
+  Serial.print(F("LITHO result="));
+  Serial.print(result.label);
+  Serial.print(F(" largest_pixels="));
+  Serial.println(result.value);
+
+  if (strcmp(result.label, "RED") == 0) {
+    buzzerAlarm_D8(2, 150);       // 红色故障牌：鸣笛2声
+  } else if (strcmp(result.label, "GREEN") == 0) {
+    buzzerAlarm_D8(1, 150);       // 绿色正常牌：鸣笛1声
+  }
 }
 
 /* ============================================================
@@ -544,6 +638,49 @@ void turnUntilLine(int turnDir) {
     analogWrite(6, 0);
 
   }
+}
+
+/* ============================================================
+ * 舱门任务并衔接回干路
+ *   - 门区动作使用已验证速度100：后退150ms、下杆、后退1000ms拉门；
+ *   - 拉门后禁止向前，先抬杆，再原地右转350ms避开拉杆；
+ *   - turnUntilLine(2)只负责对到干路；完成后恢复主路线速度和补偿。
+ * ============================================================ */
+void pullDoorAndJoinMainRoad() {
+  int savedSpeed = speed;
+  int savedCorrection = correction;
+
+  speed = DOOR_PULL_SPEED;
+  correction = 0;
+
+  Serial.println(F("DOOR 1: reverse 150ms for rod clearance"));
+  goBackward(DOOR_INITIAL_BACKWARD_MS);
+  delay(300);
+
+  Serial.println(F("DOOR 2: lower D9 arm to 135 degrees"));
+  servo_9.write(DOOR_SERVO_DOWN_ANGLE);
+  delay(DOOR_SERVO_SETTLE_MS);
+
+  Serial.println(F("DOOR 3: reverse 1000ms to pull door outward"));
+  goBackward(DOOR_PULL_BACKWARD_MS);
+
+  Serial.println(F("DOOR 4: stopped; raise D9 arm to 180 degrees"));
+  servo_9.write(DOOR_SERVO_UP_ANGLE);
+  delay(DOOR_SERVO_SETTLE_MS);
+  stopDriveForVision();
+
+  // 不能直接向前，否则会再次顶到拉杆并把门推回去。
+  Serial.println(F("DOOR 5: spin right 350ms away from pulled door"));
+  spinRight(DOOR_CLEAR_RIGHT_MS);
+
+  Serial.println(F("DOOR 6: align to main road with turnUntilLine(2)"));
+  turnUntilLine(2);
+  delay(DOOR_CLEAR_ALIGN_SETTLE_MS);
+
+  speed = savedSpeed;
+  correction = savedCorrection;
+  delay(DOOR_TO_ROUTE_SETTLE_MS);
+  Serial.println(F("DOOR PASS: aligned to main road; resume existing route"));
 }
 
 /* ============================================================
@@ -793,10 +930,9 @@ void lineFollowBackwardTime(int timeMs) {
   analogWrite(6, 0);
 }
 /* ============================================================
- * setup: 初始化原路线硬件、D9舱门机械臂和K230通信
+ * setup: 初始化原路线硬件、K230四任务通信和两路舵机
  *   - D11/A4为任务bit0/bit1，D12为K230 UART接收
- *   - D13留给摄像机舵机，本副本不对D13执行digitalWrite
- *   - D9先保持180°抬杆，正式测试中执行完整拉门动作
+ *   - D9执行舱门任务；D13在拓展区低头24°观察光刻机
  * ============================================================ */
 void setup() {
   Serial.begin(115200);
@@ -807,6 +943,7 @@ void setup() {
   pinMode(K230_UART_RX_PIN, INPUT);             // D12 <- K230 IO9
   setVisionTaskCode(VISION_TASK_IDLE);          // 上电保持00空闲
   servo_9.attach(9);                            // D9舱门机械臂
+  cameraServo_13.attach(CAMERA_SERVO_PIN);       // D13摄像机舵机
   my_1_white = 0;                               // —— 变量清零 ——
   my_2_white = 0;
   my_3_white = 0;
@@ -825,8 +962,10 @@ void setup() {
   systemTime = 0;
   digitalWrite(8, LOW);                         // 蜂鸣器保持朋友原初始状态
   setVisionTaskCode(VISION_TASK_IDLE);
-  servo_9.write(180);                           // D9机械臂保持抬起
-  delay(0);                                     // (Mixly空延时块, 无实际作用)
+  servo_9.write(DOOR_SERVO_UP_ANGLE);           // D9机械臂保持抬起
+  cameraServo_13.write(CAMERA_UP_ANGLE);         // 上电先将摄像机摆正到0°抬起位
+  Serial.println(F("Camera servo D13: UP 0 degrees; wait before calibration"));
+  delay(1000);                                  // 等摄像机到位后才进入白/黑校准
   pinMode(10, INPUT);                           // 校准按键
   pinMode(2, OUTPUT);                           // 左电机 AIN1
   pinMode(4, OUTPUT);                           // 左电机 AIN2
@@ -836,9 +975,13 @@ void setup() {
   pinMode(6, OUTPUT);                           // 右电机 PWMB
 }
 
-/* 完整路线保留在本测试文件中作为函数来源，但不参与本次执行。 */
-#if 0
-void fullRouteReferenceDisabled() {
+/* ============================================================
+ * loop: 朋友完成的固定基础+拓展路线，插入K230四类视觉任务和舱门动作。
+ *   段1校准仍为 getThresholds(0, 150, 7)。
+ *   基础区执行性别、消防、晶圆桶和D9舱门任务。
+ *   拓展区D13低头24°，在六台光刻机原观察点识别红/绿并按规则鸣笛。
+ * ============================================================ */
+void loop() {
   
   /* ===== 段1: 阈值校准(上电操作, 见 getThresholds) ===== */
   getThresholds(0, 150, 7);         // 正反=0 速度=150 右轮校正=7
@@ -872,7 +1015,7 @@ void fullRouteReferenceDisabled() {
   turnUntilLine(1);
   lineFollowJunction(2);
   delay(1500);
-  inspectFireExtinguisher();        // 10：消防颜色，BLUE鸣笛2声
+  inspectGenderAtZone(5);           // 01：第5区岗位巡查
   spinRight(200);                   // 原地右转
   turnUntilLine(2);
   lineFollowJunction(1);
@@ -883,24 +1026,29 @@ void fullRouteReferenceDisabled() {
   /* ===== 段5: 大转弯+长等待(推测: 跨区) ===== */
   spinLeft(800);                    // 原地左转
   delay(3500);                      // 等待3.5s
-  inspectGenderAtZone(5);           // 01：第5区岗位巡查候选点
+  inspectFireExtinguisher();        // 10：从消防点完成识别后继续前往6号
   turnUntilLine(2);
   turnUntilLine(2);
   lineFollowJunction(2);
-  goStraight(300);
+  goStraight(300);                  // 同学主体路线中的6号观察位置
+  inspectGenderAtZone(6);           // 01：检查6号岗位
+
+  // 库房区域暂时完全采用同学主体普通路线，不触发货品识别或舱门机械臂。
   turnUntilLine(1);
   lineFollowJunction(2);
-  delay(2000);                      // 等待2s
-  inspectWaferContainerShape();     // 11：货品/晶圆桶候选点，只记录形状结果
-  /* ===== 段6: 急促长鸣+后退(推测: 任务完成/返回) ===== */
-  buzzerAlarm_D8(100, 10);          // 连续急促鸣笛100次(结束/提示信号?)
-  goBackward(400);                  // 后退400ms
+  delay(2000);
+  // inspectWaferContainerShape();  // 暂停：晶圆桶与库房任务留待独立单元测试
+
+  /* ===== 段6: 同学主体原始库房路线 ===== */
+  buzzerAlarm_D8(100, 10);
+  goBackward(400);
   turnUntilLine(2);
   lineFollowJunction(2);
   delay(2000);
-  inspectGenderAtZone(6);           // 01：第6区岗位巡查候选点
-  goBackward(500);                  // 再后退500ms
-  turnUntilLine(2);
+
+  // pullDoorAndJoinMainRoad();     // 暂停：拉杆任务留待独立单元测试
+  goBackward(500);                 // 恢复同学主体原代码
+  turnUntilLine(2);                // 恢复同学主体原代码
   lineFollowJunction(2);
   goStraight(300);
   turnUntilLine(2);
@@ -922,6 +1070,12 @@ void fullRouteReferenceDisabled() {
   goStraight(900);                  // 长直行900ms(冲刺?)
   delay(2000);                      // 等待2s
   buzzerAlarm_D8(2, 150);           // 最后鸣笛2声(推测: 结束信号)
+
+  // 进入拓展任务区前将摄像机低头到已经单测通过的24°。
+  cameraServo_13.write(CAMERA_DOWN_ANGLE);
+  Serial.println(F("Camera servo D13: DOWN 24 degrees for lithography"));
+  delay(1000);
+
   /* ============================================================
    *                  拓展任务：6台光刻机
    *
@@ -959,7 +1113,7 @@ void fullRouteReferenceDisabled() {
   goStraight(1000);
   delay(200);
   spinRight(700); 
-  delay(3000);                 // 观察3秒
+  inspectLithographyMachine(1);
   spinRight(700);  
                // 回到原道路朝向
   delay(200);
@@ -1001,13 +1155,13 @@ void fullRouteReferenceDisabled() {
 
   // ---- 看2号 ----
   spinRight(720);
-  delay(3000);
+  inspectLithographyMachine(2);
   turnUntilLine(2);
   delay(200);
 
   // ---- 从2号直接转向4号 ----
   spinRight(710);
-  delay(3000);
+  inspectLithographyMachine(4);
   turnUntilLine(2);
   delay(200);
 
@@ -1058,7 +1212,7 @@ void fullRouteReferenceDisabled() {
 
   spinRight(700);
   goStraight(150); 
-  delay(3000);
+  inspectLithographyMachine(3);
   spinRight(700);              // 不回正，继续右转，直接掉头
     delay(200);
 
@@ -1115,7 +1269,7 @@ void fullRouteReferenceDisabled() {
    * ============================================================ */
 
   spinLeft(700);
-  delay(3000);
+  inspectLithographyMachine(5);
   spinRight(1300);
 
 
@@ -1132,61 +1286,10 @@ void fullRouteReferenceDisabled() {
    * 16. 看6号，完成拓展任务
    * ============================================================ */
 
-  delay(3000);
+  inspectLithographyMachine(6);
 
-  stopProgram();
-}
-#endif
-
-void runDoorPullAndPrepareRoute() {
-  int savedSpeed = speed;
-  int savedCorrection = correction;
-
-  // 舱门动作严格沿用已验证的单模块参数，不使用主路线150速度。
-  speed = DOOR_PULL_SPEED;
-  correction = 0;
-
-  Serial.println(F("DOOR 1: reverse 150ms for rod clearance"));
-  goBackward(DOOR_INITIAL_BACKWARD_MS);
-  delay(300);
-
-  Serial.println(F("DOOR 2: lower D9 arm to 135 degrees"));
-  servo_9.write(DOOR_SERVO_DOWN_ANGLE);
-  delay(DOOR_SERVO_SETTLE_MS);
-
-  Serial.println(F("DOOR 3: reverse 1000ms to pull door outward"));
-  goBackward(DOOR_PULL_BACKWARD_MS);
-
-  // goBackward结束时已经停车；先完全抬杆，禁止直接向前把拉杆推回去。
-  Serial.println(F("DOOR 4: stopped; raise D9 arm to 180 degrees"));
-  servo_9.write(DOOR_SERVO_UP_ANGLE);
-  delay(DOOR_SERVO_SETTLE_MS);
-  stopDriveForVision();
-
-  // 先在原地右转离开舱门正前方，再沿用朋友代码的右向传感器对线。
-  // 这一段完成之前绝不调用goStraight或lineFollowJunction。
-  Serial.println(F("CLEAR 1: spin right 350ms away from the pulled door"));
-  spinRight(DOOR_CLEAR_RIGHT_MS);
-
-  Serial.println(F("CLEAR 2: align to departure line with turnUntilLine(2)"));
-  turnUntilLine(2);
-  delay(DOOR_CLEAR_ALIGN_SETTLE_MS);
-
-  // 脱离舱门并完成对线后，才恢复朋友主路线速度和右轮补偿。
-  speed = savedSpeed;
-  correction = savedCorrection;
-  delay(DOOR_TO_ROUTE_SETTLE_MS);
-
-  Serial.println(F("HANDOFF PASS: clear of door and aligned to main road"));
-}
-
-void loop() {
-  // 白/黑校准后，第三次D10作为整套组合测试启动键。
-  getThresholds(0, 150, 7);
-
-  // 拉门后先右转避开拉杆，只对到干路，不再继续前进。
-  runDoorPullAndPrepareRoute();
-
-  Serial.println(F("DONE: door pulled and car aligned to main road; stop here."));
+  cameraServo_13.write(CAMERA_UP_ANGLE);
+  Serial.println(F("Camera servo D13: UP 0 degrees"));
+  delay(1000);
   stopProgram();
 }
