@@ -1,7 +1,7 @@
-"""CanMV K230 摄像头预览单元测试。
+"""Physical ST7701 LCD check using the old robot program's display path.
 
-第一阶段只验证：摄像头能够初始化、持续取图，并在 CanMV IDE 中显示画面。
-不包含性别识别、串口通信或小车控制逻辑。
+This test contains no AI, GPIO trigger, or UART logic. It isolates only:
+camera -> 640x480 RGB565 snapshot -> physical ST7701 LCD + CanMV IDE.
 """
 
 import gc
@@ -13,29 +13,28 @@ from media.media import MediaManager
 from media.sensor import Sensor
 
 
-IMAGE_WIDTH = 800
-IMAGE_HEIGHT = 480
+WIDTH = 640
+HEIGHT = 480
 
 sensor = None
 
 try:
     sensor = Sensor()
     sensor.reset()
-    sensor.set_framesize(width=IMAGE_WIDTH, height=IMAGE_HEIGHT)
+    sensor.set_framesize(width=WIDTH, height=HEIGHT)
     sensor.set_pixformat(Sensor.RGB565)
 
-    # 使用板载 ST7701 LCD，并通过 to_ide 同时把画面发送到 CanMV IDE。
+    # This is intentionally identical to the old machine program's
+    # physically verified display initialization.
     Display.init(
         Display.ST7701,
-        width=800,
-        height=480,
         to_ide=True,
     )
 
     MediaManager.init()
     sensor.run()
 
-    print("Camera preview started: {}x{}".format(IMAGE_WIDTH, IMAGE_HEIGHT))
+    print("Old-method LCD check started: 640x480 RGB565")
 
     while True:
         os.exitpoint()
@@ -44,12 +43,10 @@ try:
         time.sleep_ms(1)
 
 except KeyboardInterrupt:
-    print("Camera preview stopped by user")
-
+    print("Old-method LCD check stopped")
 except Exception as error:
-    print("Camera preview error:", error)
+    print("Old-method LCD check error:", error)
     raise
-
 finally:
     if sensor is not None:
         sensor.stop()
