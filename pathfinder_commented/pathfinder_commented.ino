@@ -589,7 +589,7 @@ void loop() {
   lineFollowJunction(2);            // 循迹找右侧路口
   goStraight(200);
   turnUntilLine(2);
-  lineFollowTime(700);              // 循迹700ms
+  lineFollowTime(1000);              // 循迹700ms
   delay(1500);                      // 等待1.5s
   /* ===== 段4: 信号+转向(推测: 岗位巡查/重点消防响应) ===== */
   buzzerAlarm_D8(2, 150);           // 鸣笛2声(男技术员?/蓝消防箱?)
