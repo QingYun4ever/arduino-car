@@ -1,0 +1,1 @@
+I have both files fully read. Let me verify a couple of precise line ranges for citation, and check whether a local toolchain can compile the sketch for extra evidence.
